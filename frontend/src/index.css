@@ -10,12 +10,12 @@ body {
     sans-serif;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
-  background-color: #343541;
-  color: #ececf1;
+  background-color: #ffffff;
+  color: #1e293b;
 }
 
 #root {
   min-height: 100vh;
-  background-color: #343541;
+  background-color: #ffffff;
 }
 

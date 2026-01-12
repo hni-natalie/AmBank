@@ -1,8 +1,9 @@
 """API routes for investment decision system."""
-from fastapi import APIRouter
+from fastapi import APIRouter, HTTPException
 from schemas.preferences import Preferences
 from schemas.decision import Decision
-from agents import get_macro_signal, clear_session_store
+from schemas.company import SectorCompanies
+from agents import get_macro_signal, clear_session_store, get_klse_sector_companies
 from principles.principles_engine import evaluate_decision
 
 router = APIRouter()
@@ -36,4 +37,32 @@ async def clear_session():
     """Clear session data (vectors, temporary data)."""
     clear_session_store()
     return {"status": "cleared"}
+
+
+@router.get("/sector/{sector}/companies", response_model=SectorCompanies)
+async def get_sector_companies(sector: str) -> SectorCompanies:
+    """
+    Get all companies in a specific sector from KLSE Screener.
+    
+    Args:
+        sector: Sector name (e.g., "technology", "finance", "healthcare", "energy", 
+                "consumer", "industrial")
+        
+    Returns:
+        SectorCompanies object with list of companies in the sector
+        
+    Example:
+        GET /api/sector/technology/companies
+        GET /api/sector/finance/companies
+    """
+    try:
+        result = get_klse_sector_companies(sector)
+        return result
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        raise HTTPException(
+            status_code=500, 
+            detail=f"Error fetching companies: {str(e)}"
+        )
 

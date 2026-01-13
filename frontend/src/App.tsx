@@ -1,8 +1,10 @@
+import { BrowserRouter, Routes, Route } from 'react-router-dom';
 import { useState } from 'react';
 import { LandingPage } from './components/LandingPage';
 import { GuidedChat } from './components/GuidedChat';
 import { Dashboard } from './components/Dashboard';
 import { DecisionTable } from './components/DecisionTable';
+import { DashboardPage } from './pages/DashboardPage';
 
 interface Decision {
   decision: string;
@@ -11,13 +13,7 @@ interface Decision {
 }
 
 /**
- * Main App component - orchestrates the MVP flow.
- * 
- * Flow:
- * 1. User submits preferences via GuidedChat
- * 2. Send preferences to backend
- * 3. Receive decision JSON
- * 4. Display in Dashboard and DecisionTable (only after selection)
+ * Main App component with routing.
  */
 function App() {
   const [decision, setDecision] = useState<Decision | null>(null);
@@ -68,74 +64,86 @@ function App() {
   };
 
   return (
-    <div style={{ 
-      minHeight: '100vh', 
-      backgroundColor: '#ffffff',
-      display: 'flex',
-      flexDirection: 'column'
-    }}>
-      {!showForm ? (
-        // Landing page with cards
-        <LandingPage onCardClick={handleCardClick} />
-      ) : !hasSubmitted ? (
-        // Form page - show GuidedChat
-        <GuidedChat onPreferencesSubmit={handlePreferencesSubmit} />
-      ) : (
-        // Results page - show decision results
-        <>
-          {loading && (
-            <div style={{
-              maxWidth: '768px',
-              margin: '0 auto',
-              padding: '24px 20px',
-              textAlign: 'center',
-              color: '#64748b'
+    <BrowserRouter>
+      <Routes>
+        {/* Dashboard route */}
+        <Route path="/dashboard" element={<DashboardPage />} />
+        
+        {/* Main app route */}
+        <Route
+          path="/"
+          element={
+            <div style={{ 
+              minHeight: '100vh', 
+              backgroundColor: '#ffffff',
+              display: 'flex',
+              flexDirection: 'column'
             }}>
-              <div style={{
-                display: 'inline-block',
-                width: '40px',
-                height: '40px',
-                border: '3px solid #cbd5e1',
-                borderTopColor: '#1e3a8a',
-                borderRadius: '50%',
-                animation: 'spin 1s linear infinite',
-                marginBottom: '16px'
-              }} />
-              <p style={{ fontSize: '16px' }}>Processing your investment decision...</p>
+              {!showForm ? (
+                // Landing page with cards
+                <LandingPage onCardClick={handleCardClick} />
+              ) : !hasSubmitted ? (
+                // Form page - show GuidedChat
+                <GuidedChat onPreferencesSubmit={handlePreferencesSubmit} />
+              ) : (
+                // Results page - show decision results
+                <>
+                  {loading && (
+                    <div style={{
+                      maxWidth: '768px',
+                      margin: '0 auto',
+                      padding: '24px 20px',
+                      textAlign: 'center',
+                      color: '#64748b'
+                    }}>
+                      <div style={{
+                        display: 'inline-block',
+                        width: '40px',
+                        height: '40px',
+                        border: '3px solid #cbd5e1',
+                        borderTopColor: '#1e3a8a',
+                        borderRadius: '50%',
+                        animation: 'spin 1s linear infinite',
+                        marginBottom: '16px'
+                      }} />
+                      <p style={{ fontSize: '16px' }}>Processing your investment decision...</p>
+                    </div>
+                  )}
+
+                  {error && (
+                    <div style={{
+                      maxWidth: '768px',
+                      margin: '24px auto',
+                      padding: '16px 20px',
+                      backgroundColor: '#ef4444',
+                      borderRadius: '8px',
+                      color: '#fff'
+                    }}>
+                      <strong>Error:</strong> {error}
+                    </div>
+                  )}
+
+                  {decision && !loading && (
+                    <>
+                      <Dashboard decision={decision} />
+                      <DecisionTable decision={decision} />
+                    </>
+                  )}
+                </>
+              )}
+
+              <style>{`
+                @keyframes spin {
+                  0% { transform: rotate(0deg); }
+                  100% { transform: rotate(360deg); }
+                }
+              `}</style>
             </div>
-          )}
-
-          {error && (
-            <div style={{
-              maxWidth: '768px',
-              margin: '24px auto',
-              padding: '16px 20px',
-              backgroundColor: '#ef4444',
-              borderRadius: '8px',
-              color: '#fff'
-            }}>
-              <strong>Error:</strong> {error}
-            </div>
-          )}
-
-          {decision && !loading && (
-            <>
-              <Dashboard decision={decision} />
-              <DecisionTable decision={decision} />
-            </>
-          )}
-        </>
-      )}
-
-      <style>{`
-        @keyframes spin {
-          0% { transform: rotate(0deg); }
-          100% { transform: rotate(360deg); }
-        }
-      `}</style>
-    </div>
+          }
+        />
+      </Routes>
+    </BrowserRouter>
   );
 }
 
 export default App;
-

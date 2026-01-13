@@ -3,6 +3,9 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from api.routes import router
 from api.rag_routes import router as rag_router
+from api.dashboard_routes import router as dashboard_router
+from api.company_routes import router as company_router
+from api.company_routes import router as company_router
 
 app = FastAPI(
     title="Investment Decision System",
@@ -21,6 +24,9 @@ app.add_middleware(
 
 app.include_router(router, prefix="/api")
 app.include_router(rag_router, prefix="/api")
+app.include_router(dashboard_router, prefix="/api")
+app.include_router(company_router, prefix="/api")
+app.include_router(company_router, prefix="/api")
 
 
 @app.get("/")

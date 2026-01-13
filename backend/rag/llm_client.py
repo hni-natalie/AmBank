@@ -54,12 +54,25 @@ Answer based on the context above:"""
             response = requests.post(
                 self.api_url,
                 json=payload,
-                timeout=120  # 2 minute timeout
+                timeout=60  # Reduced to 1 minute timeout to prevent hanging
             )
             response.raise_for_status()
             
             result = response.json()
-            return result.get("response", "")
+            response_text = result.get("response", "")
+            
+            # Safety check: prevent empty or extremely long responses
+            if not response_text:
+                return "No response generated from LLM."
+            if len(response_text) > 10000:  # Limit response length
+                response_text = response_text[:10000] + "... [truncated]"
+            
+            return response_text
+        except requests.exceptions.Timeout:
+            raise RuntimeError(
+                f"Ollama request timed out after 60 seconds. "
+                "The model may be too slow or overloaded."
+            )
         except requests.exceptions.ConnectionError:
             raise ConnectionError(
                 f"Could not connect to Ollama at {self.base_url}. "

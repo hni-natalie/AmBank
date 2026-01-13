@@ -20,20 +20,29 @@ Question: Given the current conditions in the {sector} sector described in the n
 
 Answer:"""
     
-    def generate_signal(self, sector: str, limit: int = 20) -> Dict:
+    def generate_signal(self, ticker: str = None, company_name: str = None, sector: str = None, limit: int = 20) -> Dict:
         """
-        Generate micro signal by scraping sector news, building vector DB, and querying RAG.
+        Generate micro signal by scraping company-specific news, building vector DB, and querying RAG.
         
         Args:
-            sector: Sector name (e.g., 'technology', 'finance')
+            ticker: Stock ticker (e.g., "AMBANK.KL") - for filtering company-specific news
+            company_name: Company name (e.g., "Ambank") - for filtering company-specific news
+            sector: Sector name (e.g., 'technology', 'finance') - fallback if no ticker/company
             limit: Maximum number of articles to scrape
             
         Returns:
             Dictionary with signal, confidence, summary, and details
         """
-        # Step 1: Scrape sector news
-        print(f"📰 Scraping {sector} sector news (limit: {limit})...")
-        articles = self.scraper.scrape_sector_news(sector, limit=limit)
+        # Step 1: Scrape news
+        if ticker or company_name:
+            # Scrape all news and filter for company-specific
+            print(f"📰 Scraping company-specific news for {ticker or company_name} (limit: {limit})...")
+            articles = self.scraper.scrape_macro_news(limit=limit * 2)  # Get more to filter
+            articles = self._filter_articles_by_company(articles, ticker, company_name)
+        else:
+            # Fallback to sector news
+            print(f"📰 Scraping {sector} sector news (limit: {limit})...")
+            articles = self.scraper.scrape_sector_news(sector, limit=limit)
         
         if not articles:
             return {
@@ -87,18 +96,33 @@ Answer:"""
             }
         
         # Step 3: Query RAG with improved prompt
-        print(f"🔍 Querying RAG system for {sector} sector...")
-        query = f"""Based on the following news articles about the {sector} sector in Malaysia, analyze the current sector conditions and provide a clear investment recommendation.
+        company_context = f" for {company_name or ticker}" if (company_name or ticker) else f" in the {sector} sector"
+        print(f"🔍 Querying RAG system{company_context}...")
+        query = f"""Based on the following news articles about {company_name or ticker or f'the {sector} sector'} in Malaysia, analyze the current conditions and provide a clear investment recommendation.
 
-Analyze the {sector} sector news articles provided and determine:
-1. Overall sector sentiment (positive/negative/neutral)
-2. Key developments or events affecting the {sector} sector
-3. Investment recommendation: Should investors BUY, SELL, or HOLD stocks in the {sector} sector?
+Analyze the news articles provided and determine:
+1. Overall sentiment (positive/negative/neutral)
+2. Key developments or events affecting {company_name or ticker or f'the {sector} sector'}
+3. Investment recommendation: Should investors BUY, SELL, or HOLD stocks?
+
+Categorize each relevant news item as:
+- POSITIVE: News that supports buying or indicates favorable conditions
+- ADVERSE: News that suggests selling or indicates unfavorable conditions  
+- TREND: News that indicates ongoing trends or patterns
 
 Provide your answer in this format:
 RECOMMENDATION: [BUY/SELL/HOLD]
 SENTIMENT: [positive/negative/neutral]
-REASONING: [2-3 sentences explaining your recommendation based on the {sector} sector news articles]"""
+REASONING: [2-3 sentences explaining your recommendation based on the news articles]
+POSITIVE_SIGNALS:
+- [Signal 1]
+- [Signal 2]
+ADVERSE_SIGNALS:
+- [Signal 1]
+- [Signal 2]
+TREND_SIGNALS:
+- [Signal 1]
+- [Signal 2]"""
         
         result = self.rag.query(
             query=query,
@@ -115,17 +139,25 @@ REASONING: [2-3 sentences explaining your recommendation based on the {sector} s
         signal, confidence = self._extract_signal_from_answer(answer, result)
         
         # Generate actionable summary
-        summary = self._generate_summary(answer, articles, sector, result)
+        summary = self._generate_summary(answer, articles, sector or company_name or ticker, result)
+        
+        # Step 5: Parse signals into Positive/Adverse/Trend
+        positive_signals, adverse_signals, trend_signals = self._parse_signals(answer, result)
         
         return {
             'sector_stance': signal,
             'confidence': confidence,
             'summary': summary,
             'sector': sector,
+            'ticker': ticker,
+            'company_name': company_name,
             'articles_count': len(articles),
             'rag_answer': answer,
             'retrieved_context_count': result['retrieved_count'],
             'key_points': self._extract_key_points(answer, result),
+            'positive_signals': positive_signals,
+            'adverse_signals': adverse_signals,
+            'trend_signals': trend_signals,
             'details': [
                 {
                     'title': article['title'],
@@ -220,6 +252,128 @@ REASONING: [2-3 sentences explaining your recommendation based on the {sector} s
             key_points = sentences[:3]  # Top 3 sentences
         
         return key_points[:5]  # Max 5 key points
+    
+    def _filter_articles_by_company(self, articles: List[Dict], ticker: str = None, company_name: str = None) -> List[Dict]:
+        """
+        Filter articles by company ticker or name.
+        
+        Args:
+            articles: List of article dictionaries
+            ticker: Stock ticker (e.g., "AMBANK.KL")
+            company_name: Company name (e.g., "Ambank")
+            
+        Returns:
+            Filtered list of articles
+        """
+        if not ticker and not company_name:
+            return articles
+        
+        filtered = []
+        ticker_code = ticker.replace('.KL', '').upper() if ticker else None
+        company_lower = company_name.lower() if company_name else None
+        
+        # Company name variations
+        company_variations = []
+        if company_name:
+            company_variations.append(company_name.lower())
+            # Add common variations
+            if 'bank' in company_lower:
+                company_variations.append(company_lower.replace(' bank', ''))
+                company_variations.append(company_lower.replace('bank', ''))
+        
+        if ticker_code:
+            company_variations.append(ticker_code.lower())
+        
+        for article in articles:
+            title_lower = article.get('title', '').lower()
+            content_lower = article.get('content', '').lower()
+            
+            # Check if article mentions company
+            for variation in company_variations:
+                if variation and (variation in title_lower or variation in content_lower):
+                    filtered.append(article)
+                    break
+        
+        return filtered[:20]  # Limit to 20 articles
+    
+    def _parse_signals(self, answer: str, rag_result: Dict) -> tuple:
+        """
+        Parse signals from RAG answer into Positive/Adverse/Trend categories.
+        
+        Args:
+            answer: RAG answer text
+            rag_result: Full RAG result with context
+            
+        Returns:
+            Tuple of (positive_signals, adverse_signals, trend_signals)
+        """
+        positive_signals = []
+        adverse_signals = []
+        trend_signals = []
+        
+        answer_lower = answer.lower()
+        
+        # Extract from structured format if present
+        if 'POSITIVE_SIGNALS:' in answer:
+            pos_section = answer.split('POSITIVE_SIGNALS:')[1]
+            if 'ADVERSE_SIGNALS:' in pos_section:
+                pos_section = pos_section.split('ADVERSE_SIGNALS:')[0]
+            lines = pos_section.split('\n')
+            for line in lines:
+                line = line.strip()
+                if line and (line.startswith('-') or line.startswith('•')):
+                    signal = line.lstrip('- •').strip()
+                    if signal:
+                        positive_signals.append(signal)
+        
+        if 'ADVERSE_SIGNALS:' in answer:
+            adv_section = answer.split('ADVERSE_SIGNALS:')[1]
+            if 'TREND_SIGNALS:' in adv_section:
+                adv_section = adv_section.split('TREND_SIGNALS:')[0]
+            lines = adv_section.split('\n')
+            for line in lines:
+                line = line.strip()
+                if line and (line.startswith('-') or line.startswith('•')):
+                    signal = line.lstrip('- •').strip()
+                    if signal:
+                        adverse_signals.append(signal)
+        
+        if 'TREND_SIGNALS:' in answer:
+            trend_section = answer.split('TREND_SIGNALS:')[1]
+            lines = trend_section.split('\n')
+            for line in lines:
+                line = line.strip()
+                if line and (line.startswith('-') or line.startswith('•')):
+                    signal = line.lstrip('- •').strip()
+                    if signal:
+                        trend_signals.append(signal)
+        
+        # Fallback: Extract from context if structured format not found
+        if not positive_signals and not adverse_signals and not trend_signals:
+            context_texts = rag_result.get('context', [])
+            for context in context_texts[:3]:  # Analyze top 3 contexts
+                context_lower = context.lower()
+                # Simple keyword-based categorization
+                positive_keywords = ['growth', 'increase', 'profit', 'gain', 'positive', 'strong', 'improve', 'rise', 'up']
+                adverse_keywords = ['decline', 'decrease', 'loss', 'negative', 'weak', 'fall', 'down', 'risk', 'concern']
+                trend_keywords = ['trend', 'pattern', 'continue', 'ongoing', 'maintain', 'stable']
+                
+                pos_count = sum(1 for kw in positive_keywords if kw in context_lower)
+                adv_count = sum(1 for kw in adverse_keywords if kw in context_lower)
+                trend_count = sum(1 for kw in trend_keywords if kw in context_lower)
+                
+                # Extract a sentence from context
+                sentences = context.split('.')
+                if sentences:
+                    signal_text = sentences[0].strip()[:150]  # First sentence, max 150 chars
+                    if pos_count > adv_count and pos_count > 0:
+                        positive_signals.append(signal_text)
+                    elif adv_count > pos_count and adv_count > 0:
+                        adverse_signals.append(signal_text)
+                    elif trend_count > 0:
+                        trend_signals.append(signal_text)
+        
+        return positive_signals[:5], adverse_signals[:5], trend_signals[:5]  # Max 5 each
     
     def clear(self):
         """Clear RAG system."""

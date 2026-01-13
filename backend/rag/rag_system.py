@@ -43,7 +43,16 @@ class RAGSystem:
             raise ValueError("metadata length must match documents length")
         
         # Generate embeddings for all documents
-        embeddings = self.embedding_model.embed_text(documents)
+        # Limit batch size to prevent memory issues
+        max_batch_size = 50
+        all_embeddings = []
+        
+        for i in range(0, len(documents), max_batch_size):
+            batch_docs = documents[i:i + max_batch_size]
+            batch_embeddings = self.embedding_model.embed_text(batch_docs)
+            all_embeddings.extend(batch_embeddings)
+        
+        embeddings = all_embeddings
         
         # Add to vector store
         for doc, emb, meta in zip(documents, embeddings, metadata):
@@ -100,10 +109,17 @@ class RAGSystem:
         if len(text) <= chunk_size:
             return [text]
         
+        # Safety check: ensure overlap is less than chunk_size
+        if chunk_overlap >= chunk_size:
+            chunk_overlap = max(1, chunk_size // 4)  # Default to 25% overlap
+        
         chunks = []
         start = 0
+        max_iterations = len(text) // max(1, chunk_size - chunk_overlap) + 10  # Safety limit
+        iteration = 0
         
-        while start < len(text):
+        while start < len(text) and iteration < max_iterations:
+            iteration += 1
             end = start + chunk_size
             chunk = text[start:end]
             
@@ -118,7 +134,13 @@ class RAGSystem:
                         break
             
             chunks.append(chunk.strip())
-            start = end - chunk_overlap
+            
+            # Ensure we always advance
+            new_start = end - chunk_overlap
+            if new_start <= start:
+                new_start = start + 1  # Force advancement
+            
+            start = new_start
         
         return chunks
     
@@ -199,13 +221,27 @@ class RAGSystem:
                 'retrieved_count': 0
             }
         
+        # Limit context length to prevent overly long prompts
+        max_context_length = 5000  # characters
         context = "\n\n---\n\n".join(context_texts)
+        if len(context) > max_context_length:
+            # Truncate context but keep it meaningful
+            context = context[:max_context_length] + "\n\n[Context truncated...]"
         
         # Generate answer with context
-        if include_context:
-            answer = self.llm_client.generate(query, context=context, **llm_kwargs)
-        else:
-            answer = self.llm_client.generate(query, **llm_kwargs)
+        try:
+            if include_context:
+                answer = self.llm_client.generate(query, context=context, **llm_kwargs)
+            else:
+                answer = self.llm_client.generate(query, **llm_kwargs)
+        except Exception as e:
+            # Fallback if LLM generation fails
+            return {
+                'answer': f'Error generating response: {str(e)}',
+                'context': context_texts,
+                'sources': sources,
+                'retrieved_count': len(results)
+            }
         
         return {
             'answer': answer,

@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { GuidedChat } from './components/GuidedChat';
 import { Dashboard } from './components/Dashboard';
 import { DecisionTable } from './components/DecisionTable';
+import { SectorPeers } from './components/SectorPeers';
 
 interface Decision {
   decision: string;
@@ -19,6 +20,7 @@ interface Decision {
  * 4. Display in Dashboard and DecisionTable (only after selection)
  */
 function App() {
+  const [currentView, setCurrentView] = useState<'chat' | 'sector-peers'>('sector-peers');
   const [decision, setDecision] = useState<Decision | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -58,55 +60,111 @@ function App() {
   return (
     <div style={{ 
       minHeight: '100vh', 
-      backgroundColor: '#343541',
+      backgroundColor: '#f5f5f5',
       display: 'flex',
       flexDirection: 'column'
     }}>
-      {!hasSubmitted ? (
-        // Landing page - only show GuidedChat
-        <GuidedChat onPreferencesSubmit={handlePreferencesSubmit} />
+      {/* Navigation */}
+      <nav style={{
+        backgroundColor: 'white',
+        boxShadow: '0 2px 4px rgba(0,0,0,0.1)',
+        padding: '0 20px',
+        marginBottom: '20px'
+      }}>
+        <div style={{
+          display: 'flex',
+          gap: '20px',
+          maxWidth: '1400px',
+          margin: '0 auto'
+        }}>
+          <button
+            onClick={() => setCurrentView('sector-peers')}
+            style={{
+              padding: '15px 20px',
+              border: 'none',
+              background: 'none',
+              cursor: 'pointer',
+              fontSize: '16px',
+              fontWeight: currentView === 'sector-peers' ? '600' : '400',
+              color: currentView === 'sector-peers' ? '#007bff' : '#666',
+              borderBottom: currentView === 'sector-peers' ? '3px solid #007bff' : 'none'
+            }}
+          >
+            Sector Peers
+          </button>
+          <button
+            onClick={() => {
+              setCurrentView('chat');
+              setHasSubmitted(false);
+            }}
+            style={{
+              padding: '15px 20px',
+              border: 'none',
+              background: 'none',
+              cursor: 'pointer',
+              fontSize: '16px',
+              fontWeight: currentView === 'chat' ? '600' : '400',
+              color: currentView === 'chat' ? '#007bff' : '#666',
+              borderBottom: currentView === 'chat' ? '3px solid #007bff' : 'none'
+            }}
+          >
+            Decision Analysis
+          </button>
+        </div>
+      </nav>
+
+      {/* Content */}
+      {currentView === 'sector-peers' ? (
+        <SectorPeers />
       ) : (
-        // Results page - show decision results
         <>
-          {loading && (
-            <div style={{
-              maxWidth: '768px',
-              margin: '0 auto',
-              padding: '24px 20px',
-              textAlign: 'center',
-              color: '#8e8ea0'
-            }}>
-              <div style={{
-                display: 'inline-block',
-                width: '40px',
-                height: '40px',
-                border: '3px solid #565869',
-                borderTopColor: '#10a37f',
-                borderRadius: '50%',
-                animation: 'spin 1s linear infinite',
-                marginBottom: '16px'
-              }} />
-              <p style={{ fontSize: '16px' }}>Processing your investment decision...</p>
-            </div>
-          )}
-
-          {error && (
-            <div style={{
-              maxWidth: '768px',
-              margin: '24px auto',
-              padding: '16px 20px',
-              backgroundColor: '#ef4444',
-              borderRadius: '8px',
-              color: '#fff'
-            }}>
-              <strong>Error:</strong> {error}
-            </div>
-          )}
-
-          {decision && !loading && (
+          {!hasSubmitted ? (
+            // Landing page - only show GuidedChat
+            <GuidedChat onPreferencesSubmit={handlePreferencesSubmit} />
+          ) : (
+            // Results page - show decision results
             <>
-              <Dashboard decision={decision} />
-              <DecisionTable decision={decision} />
+              {loading && (
+                <div style={{
+                  maxWidth: '768px',
+                  margin: '0 auto',
+                  padding: '24px 20px',
+                  textAlign: 'center',
+                  color: '#8e8ea0'
+                }}>
+                  <div style={{
+                    display: 'inline-block',
+                    width: '40px',
+                    height: '40px',
+                    border: '3px solid #565869',
+                    borderTopColor: '#10a37f',
+                    borderRadius: '50%',
+                    animation: 'spin 1s linear infinite',
+                    marginBottom: '16px'
+                  }} />
+                  <p style={{ fontSize: '16px' }}>Processing your investment decision...</p>
+                </div>
+              )}
+
+              {error && (
+                <div style={{
+                  maxWidth: '768px',
+                  margin: '24px auto',
+                  padding: '16px 20px',
+                  backgroundColor: '#ef4444',
+                  borderRadius: '8px',
+                  color: '#fff'
+                }}>
+                  <strong>Error:</strong> {error}
+                </div>
+              )}
+
+              {decision && !loading && (
+                <>
+                  <Dashboard decision={decision} />
+                  <DecisionTable decision={decision} />
+                </>
+              )}
             </>
           )}
         </>

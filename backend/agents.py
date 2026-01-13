@@ -1,5 +1,6 @@
 """Agents module - combines macro/sector/Bursa agents + in-memory vector store."""
 from typing import List, Dict, Optional
+from fastapi import APIRouter, HTTPException, Query, UploadFile, File
 import requests
 from bs4 import BeautifulSoup
 import time
@@ -11,6 +12,8 @@ from schemas.signals import MacroSignal
 from schemas.company import Company, SectorCompanies
 from schemas.company_query import CompanyQueryResponse
 from utils.logger import AgentLogger, log_agent_execution
+import pdfplumber
+import os
 
 # Try to import ollama, fallback if not available
 try:
@@ -107,6 +110,244 @@ def clear_session_store():
     if _session_store is not None:
         _session_store.clear()
         _session_store = None
+
+# ============================================================================
+# PDF Text Extraction and Search
+# ============================================================================
+
+def download_and_search_pdf(pdf_url: str, search_phrase: str = "") -> Dict:
+    """
+    Download a PDF using Selenium (bypasses 403) and extract text using pdfplumber.
+    
+    If search_phrase is provided, searches for that phrase. Otherwise, extracts all text.
+    
+    Args:
+        pdf_url: URL of the PDF to download
+        search_phrase: Optional phrase to search for (default: "" = extract all text)
+        
+    Returns:
+        Dictionary with search results or all extracted text
+    """
+    import tempfile
+    import shutil
+    import glob
+    
+    try:
+        from selenium import webdriver
+        from selenium.webdriver.chrome.options import Options
+        from selenium.webdriver.chrome.service import Service
+    except ImportError:
+        return {
+            "url": pdf_url,
+            "found": False,
+            "matches": [],
+            "error": "Selenium not available. Install with: pip install selenium"
+        }
+    
+    result = {
+        "url": pdf_url,
+        "found": False,
+        "matches": [],
+        "error": None
+    }
+    
+    driver = None
+    temp_dir = None
+    
+    try:
+        # Create temp directory for downloads
+        temp_dir = tempfile.mkdtemp()
+        print(f"[PDF_SEARCH] Downloading PDF from: {pdf_url}")
+        print(f"  [PDF_SEARCH] Download directory: {temp_dir}")
+        
+        # Configure Chrome to auto-download PDFs
+        chrome_options = Options()
+        chrome_options.add_argument("--headless=new")
+        chrome_options.add_argument("--no-sandbox")
+        chrome_options.add_argument("--disable-dev-shm-usage")
+        chrome_options.add_argument("--disable-gpu")
+        chrome_options.add_argument("user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+        
+        # Set download preferences
+        prefs = {
+            "download.default_directory": temp_dir,
+            "download.prompt_for_download": False,
+            "download.directory_upgrade": True,
+            "plugins.always_open_pdf_externally": True,
+            "safebrowsing.enabled": True
+        }
+        chrome_options.add_experimental_option("prefs", prefs)
+        
+        # Initialize driver
+        try:
+            service = Service()
+            driver = webdriver.Chrome(service=service, options=chrome_options)
+        except:
+            driver = webdriver.Chrome(options=chrome_options)
+        
+        # Navigate to PDF URL
+        print(f"  [PDF_SEARCH] Navigating to PDF URL...")
+        driver.get(pdf_url)
+        
+        # Wait for download to complete
+        max_wait = 60
+        waited = 0
+        pdf_file = None
+        
+        while waited < max_wait:
+            time.sleep(1)
+            waited += 1
+            
+            # Check for downloaded PDF files
+            pdf_files = glob.glob(os.path.join(temp_dir, "*.pdf"))
+            crdownload_files = glob.glob(os.path.join(temp_dir, "*.crdownload"))
+            tmp_files = glob.glob(os.path.join(temp_dir, "*.tmp"))
+            
+            if pdf_files and not crdownload_files and not tmp_files:
+                pdf_file = pdf_files[0]
+                print(f"  ✓ PDF downloaded: {os.path.basename(pdf_file)}")
+                break
+            
+            if waited % 10 == 0:
+                print(f"  [PDF_SEARCH] Still downloading... ({waited}s)")
+        
+        if not pdf_file:
+            result["error"] = f"Download timeout after {max_wait} seconds"
+            print(f"  ⚠ {result['error']}")
+            return result
+        
+        file_size = os.path.getsize(pdf_file)
+        print(f"  ✓ PDF file size: {file_size} bytes")
+        
+        # Extract text using pdfplumber
+        try:
+            import pdfplumber
+        except ImportError:
+            result["error"] = "pdfplumber not installed. Install with: pip install pdfplumber"
+            return result
+        
+        with pdfplumber.open(pdf_file) as pdf:
+            total_pages = len(pdf.pages)
+            print(f"  [PDF_SEARCH] PDF has {total_pages} pages")
+            
+            # If search_phrase is empty, extract all text
+            if not search_phrase or search_phrase.strip() == "":
+                print(f"[PDF_SEARCH] Extracting all text from PDF...")
+                for page_num, page in enumerate(pdf.pages, 1):
+                    try:
+                        text = page.extract_text()
+                        if text:
+                            result["found"] = True
+                            result["matches"].append({
+                                "page": page_num,
+                                "excerpt": text.strip()
+                            })
+                            print(f"    ✓ Extracted page {page_num}")
+                    except Exception as e:
+                        print(f"    ⚠ Error on page {page_num}: {str(e)}")
+                        continue
+                print(f"  ✓ Extracted text from {len(result['matches'])} page(s)")
+            else:
+                # Search for specific phrase
+                print(f"[PDF_SEARCH] Searching for '{search_phrase}'...")
+                for page_num, page in enumerate(pdf.pages, 1):
+                    try:
+                        text = page.extract_text()
+                        if text:
+                            text_lower = text.lower()
+                            search_lower = search_phrase.lower()
+                            
+                            if search_lower in text_lower:
+                                result["found"] = True
+                                
+                                # Extract context around the match
+                                match_index = text_lower.find(search_lower)
+                                start = max(0, match_index - 200)
+                                end = min(len(text), match_index + len(search_phrase) + 200)
+                                excerpt = text[start:end].strip()
+                                
+                                result["matches"].append({
+                                    "page": page_num,
+                                    "excerpt": excerpt
+                                })
+                                
+                                print(f"    ✓ Found on page {page_num}")
+                    except Exception as e:
+                        print(f"    ⚠ Error on page {page_num}: {str(e)}")
+                        continue
+            
+                if result["found"]:
+                    print(f"  ✓ Found '{search_phrase}' on {len(result['matches'])} page(s)")
+                else:
+                    print(f"  ⚠ '{search_phrase}' not found in PDF")
+        
+        return result
+        
+    except Exception as e:
+        result["error"] = f"Error processing PDF: {str(e)}"
+        print(f"  ⚠ {result['error']}")
+        return result
+    finally:
+        if driver:
+            driver.quit()
+        if temp_dir and os.path.exists(temp_dir):
+            try:
+                shutil.rmtree(temp_dir)
+            except:
+                pass
+
+
+@log_agent_execution("search_ar_agent")
+def search_ar_for_phrase(ar_urls: List[str], search_phrase: str = "financial highlights") -> Dict:
+    """
+    Search multiple annual report PDFs for a specific phrase.
+    Uses Selenium to download (bypasses 403) and pdfplumber to extract text.
+    
+    Args:
+        ar_urls: List of annual report PDF URLs to search
+        search_phrase: Phrase to search for (default: "financial highlights")
+        
+    Returns:
+        Dictionary with results for each PDF
+    """
+    agent_logger = AgentLogger("search_ar_agent")
+    agent_logger.log_agent_start({
+        "total_urls": len(ar_urls),
+        "search_phrase": search_phrase
+    })
+    
+    print(f"[SEARCH_AR] Starting search for '{search_phrase}' in {len(ar_urls)} PDF(s)")
+    
+    results = []
+    found_count = 0
+    
+    for idx, url in enumerate(ar_urls, 1):
+        print(f"\n[SEARCH_AR.{idx}/{len(ar_urls)}] Processing: {url}")
+        
+        result = download_and_search_pdf(url, search_phrase)
+        results.append(result)
+        
+        if result["found"]:
+            found_count += 1
+    
+    summary = {
+        "total": len(ar_urls),
+        "found_in": found_count,
+        "search_phrase": search_phrase,
+        "results": results
+    }
+    
+    print(f"\n[SEARCH_AR] ✓ Search complete:")
+    print(f"  - Total PDFs: {len(ar_urls)}")
+    print(f"  - Found in: {found_count} PDF(s)")
+    print(f"  - Not found in: {len(ar_urls) - found_count} PDF(s)")
+    
+    agent_logger.log_agent_end(
+        input_data={"total_urls": len(ar_urls), "search_phrase": search_phrase},
+        output_data=summary
+    )
+    
+    return summary
 
 
 # ============================================================================
@@ -389,21 +630,21 @@ def fetch_average_volume_for_companies(companies: List[Company]) -> List[Company
 @log_agent_execution("fetch_annual_reports_agent")
 def fetch_annual_reports_for_companies(companies: List[Company]) -> List[Company]:
     """
-    Fetch annual report PDFs for a list of companies.
+    Fetch annual financial data for a list of companies.
     
     This agent takes a list of Company objects, extracts their company codes,
-    and fetches the annual report PDFs for each company.
+    and fetches the financial data (Revenue, Net, EPS, DP%, Net%) for each company.
     
     Args:
         companies: List of Company objects
         
     Returns:
-        List of Company objects with annual_report_pdfs field populated
+        List of Company objects with annual financial data populated
     """
     agent_logger = AgentLogger("fetch_annual_reports_agent")
     agent_logger.log_agent_start({"total_companies": len(companies)})
     
-    print(f"[FETCH_ANNUAL_REPORTS] Starting annual report extraction for {len(companies)} companies")
+    print(f"[FETCH_ANNUAL_FINANCIALS] Starting financial data extraction for {len(companies)} companies")
     
     skipped_no_code = 0
     errors = 0
@@ -413,30 +654,33 @@ def fetch_annual_reports_for_companies(companies: List[Company]) -> List[Company
         try:
             # Skip if no company code
             if not company.code:
-                print(f"  [FETCH_ANNUAL_REPORTS.{idx}] Skipping {company.name}: No company code")
-                company.annual_report_pdfs = []
+                print(f"  [FETCH_ANNUAL_FINANCIALS.{idx}] Skipping {company.name}: No company code")
                 skipped_no_code += 1
                 continue
             
-            print(f"  [FETCH_ANNUAL_REPORTS.{idx}] Fetching annual reports for {company.name} ({company.code})...")
+            print(f"  [FETCH_ANNUAL_FINANCIALS.{idx}] Fetching financial data for {company.name} ({company.code})...")
             
-            # Fetch annual report PDFs
-            pdf_urls = get_annual_report_pdfs(company.code)
+            # Fetch annual financial data
+            financial_data = get_annual_report_pdfs(company.code)
             
-            if pdf_urls:
-                company.annual_report_pdfs = pdf_urls
-                print(f"    ✓ Found {len(pdf_urls)} annual report PDF(s)")
+            if financial_data:
+                # Update company with financial data
+                company.financial_year = financial_data.get("financial_year")
+                company.annual_revenue = financial_data.get("annual_revenue")
+                company.annual_net = financial_data.get("annual_net")
+                company.annual_eps = financial_data.get("annual_eps")
+                company.annual_dp_percent = financial_data.get("annual_dp_percent")
+                company.annual_net_percent = financial_data.get("annual_net_percent")
+                print(f"    ✓ Extracted financial data for FY {company.financial_year}")
                 success_count += 1
             else:
-                company.annual_report_pdfs = []
-                print(f"    ⚠ No annual report PDFs found")
+                print(f"    ⚠ No financial data found")
             
         except Exception as e:
-            print(f"  [FETCH_ANNUAL_REPORTS.{idx}] ⚠ Error processing {company.name}: {str(e)}")
+            print(f"  [FETCH_ANNUAL_FINANCIALS.{idx}] ⚠ Error processing {company.name}: {str(e)}")
             errors += 1
-            company.annual_report_pdfs = []
     
-    print(f"[FETCH_ANNUAL_REPORTS] ✓ Annual report extraction complete:")
+    print(f"[FETCH_ANNUAL_FINANCIALS] ✓ Financial data extraction complete:")
     print(f"  - Total companies: {len(companies)}")
     print(f"  - Successfully fetched: {success_count}")
     print(f"  - Skipped (no code): {skipped_no_code}")
@@ -459,24 +703,14 @@ def enrich_companies_with_volume_and_reports(companies: List[Company]) -> List[C
     """
     Pipeline:
     1. Fetch Average Volume (3M)
-    2. (Optional) Filter illiquid companies
-    3. Fetch Annual Reports
+    2. Fetch Annual Financial Data (Revenue, Net, EPS, DP%, Net%)
     """
 
     print("[PIPELINE] Step 1: Fetch Average Volume")
     companies = fetch_average_volume_for_companies(companies)
 
-    # OPTIONAL: Liquidity filter (highly recommended)
-    MIN_AVG_VOLUME = 500_000  # example threshold
-    liquid_companies = [
-        c for c in companies
-        if c.average_volume is not None and c.average_volume >= MIN_AVG_VOLUME
-    ]
-
-    print(f"[PIPELINE] Liquidity filter: {len(liquid_companies)} / {len(companies)} passed")
-
-    print("[PIPELINE] Step 2: Fetch Annual Reports")
-    liquid_companies = fetch_annual_reports_for_companies(liquid_companies)
+    print("[PIPELINE] Step 2: Fetch Annual Financial Data")
+    liquid_companies = fetch_annual_reports_for_companies(companies)
 
     return liquid_companies
 
@@ -553,8 +787,298 @@ def _get_available_models_list() -> str:
 
 
 @log_agent_execution("annual_report_agent")
-def get_annual_report_pdfs(company_code: str) -> List[str]:
+def get_annual_report_pdfs(company_code: str) -> Dict:
     """
+    Extract financial data from the Annual Reports page for a company.
+    
+    This function:
+    1. Navigates to the company detail page
+    2. Clicks on the "Annual" link
+    3. Extracts financial data from the table (Revenue, Net, EPS, DP%, Net%)
+    
+    Args:
+        company_code: Company code (e.g., "5211", "1295")
+        
+    Returns:
+        Dictionary with financial data: {
+            "financial_year": str,
+            "annual_revenue": float,
+            "annual_net": float,
+            "annual_eps": float,
+            "annual_dp_percent": float,
+            "annual_net_percent": float
+        }
+        
+    Example:
+        financial_data = get_annual_report_pdfs("5211")
+    """
+    agent_logger = AgentLogger("annual_report_agent")
+    agent_logger.log_agent_start({"company_code": company_code})
+    
+    print(f"[ANNUAL_FINANCIALS] Starting financial data extraction for company code: {company_code}")
+    
+    try:
+        from selenium import webdriver
+        from selenium.webdriver.common.by import By
+        from selenium.webdriver.support.ui import WebDriverWait
+        from selenium.webdriver.support import expected_conditions as EC
+        from selenium.webdriver.chrome.options import Options
+        from selenium.webdriver.chrome.service import Service
+    except ImportError:
+        error_msg = "Selenium not available"
+        print(f"  ⚠ {error_msg}")
+        agent_logger.error(error_msg)
+        return {}
+    
+    detail_url = f"https://www.klsescreener.com/v2/stocks/view/{company_code}"
+    driver = None
+    financial_data = {}
+    
+    try:
+        # Configure Chrome options
+        chrome_options = Options()
+        chrome_options.add_argument("--headless")
+        chrome_options.add_argument("--no-sandbox")
+        chrome_options.add_argument("--disable-dev-shm-usage")
+        chrome_options.add_argument("--window-size=1920,1080")
+        chrome_options.add_argument("user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
+        
+        # Initialize driver
+        try:
+            service = Service()
+            driver = webdriver.Chrome(service=service, options=chrome_options)
+        except:
+            driver = webdriver.Chrome(options=chrome_options)
+        
+        # Step 1: Navigate to company detail page
+        print(f"  [STEP 1] Navigating to {detail_url}...")
+        driver.get(detail_url)
+        time.sleep(3)
+        
+        # Step 2: Find and click "Annual" link
+        print(f"  [STEP 2] Looking for 'Annual' link...")
+        annual_link = None
+        
+        # Try multiple selectors for Annual link
+        annual_selectors = [
+            (By.LINK_TEXT, "Annual"),
+            (By.PARTIAL_LINK_TEXT, "Annual"),
+            (By.XPATH, "//a[contains(text(), 'Annual')]"),
+            (By.XPATH, "//a[contains(@href, 'annual')]"),
+        ]
+        
+        for selector_type, selector_value in annual_selectors:
+            try:
+                annual_link = WebDriverWait(driver, 5).until(
+                    EC.presence_of_element_located((selector_type, selector_value))
+                )
+                print(f"  ✓ Found 'Annual' link using: {selector_type}")
+                break
+            except:
+                continue
+        
+        if not annual_link:
+            print(f"  ⚠ 'Annual' link not found on page")
+            return {}
+        
+        # Click the Annual link
+        print(f"  [STEP 2.1] Clicking 'Annual' link...")
+        driver.execute_script("arguments[0].scrollIntoView(true);", annual_link)
+        time.sleep(0.5)
+        
+        try:
+            annual_link.click()
+        except:
+            driver.execute_script("arguments[0].click();", annual_link)
+        
+        time.sleep(3)
+        print(f"  ✓ Navigated to Annual page")
+        
+        # Debug: Print page text content
+        print(f"\n{'='*80}")
+        print(f"[DEBUG] PAGE CONTENT:")
+        print(f"{'='*80}")
+        page_text = driver.find_element(By.TAG_NAME, "body").text
+        print(page_text)
+        print(f"{'='*80}\n")
+        
+        # Step 3: Extract financial data from table
+        print(f"  [STEP 3] Extracting financial data from table...")
+        
+        # First, find all tables on the page
+        all_tables = driver.find_elements(By.CSS_SELECTOR, "table")
+        print(f"  [DEBUG] Found {len(all_tables)} tables on the page")
+        
+        # Find the correct table - should have rows with 7 cells (Financial Year, Revenue, Net, EPS, DP%, Net%, Report)
+        # Note: Some rows might have both td and th cells, so count total cells
+        target_table = None
+        for table_idx, table in enumerate(all_tables):
+            try:
+                rows = table.find_elements(By.CSS_SELECTOR, "tbody tr")
+                if not rows:
+                    rows = table.find_elements(By.TAG_NAME, "tr")
+                
+                # Check if any row has 7 total cells (td + th)
+                for row in rows[:5]:  # Check first 5 rows
+                    td_cells = row.find_elements(By.TAG_NAME, "td")
+                    th_cells = row.find_elements(By.TAG_NAME, "th")
+                    total_cells = len(td_cells) + len(th_cells)
+                    if total_cells == 7:
+                        target_table = table
+                        print(f"  ✓ Found target table (table #{table_idx + 1}) with 7-cell rows")
+                        break
+                
+                if target_table:
+                    break
+            except:
+                continue
+        
+        if not target_table:
+            print(f"  ⚠ Could not find table with 7-cell rows")
+            # Debug: show structure of ALL tables
+            print(f"  [DEBUG] Table structure analysis (all {len(all_tables)} tables):")
+            for table_idx, table in enumerate(all_tables):
+                try:
+                    rows = table.find_elements(By.TAG_NAME, "tr")
+                    print(f"    Table {table_idx + 1}: {len(rows)} rows")
+                    for row_idx, row in enumerate(rows[:3]):
+                        cells = row.find_elements(By.TAG_NAME, "td")
+                        th_cells = row.find_elements(By.TAG_NAME, "th")
+                        print(f"      Row {row_idx}: {len(cells)} td cells, {len(th_cells)} th cells")
+                        if cells:
+                            print(f"        First cell: '{cells[0].text.strip()[:30]}'")
+                except:
+                    pass
+            return {}
+        
+        # Now extract rows from the target table
+        rows = target_table.find_elements(By.CSS_SELECTOR, "tbody tr")
+        if not rows:
+            rows = target_table.find_elements(By.TAG_NAME, "tr")
+        
+        print(f"  [DEBUG] Target table has {len(rows)} rows")
+        
+        # Find all data rows (up to 5 rows with financial data)
+        data_rows = []
+        for idx, row in enumerate(rows):
+            try:
+                td_cells = row.find_elements(By.TAG_NAME, "td")
+                th_cells = row.find_elements(By.TAG_NAME, "th")
+                total_cells = len(td_cells) + len(th_cells)
+                
+                # We want a data row (has td cells, not just th cells)
+                if len(td_cells) > 0 and total_cells == 7:
+                    data_rows.append(row)
+                    print(f"  [DEBUG] Found data row at index {idx} with {len(td_cells)} td cells + {len(th_cells)} th cells")
+                    if len(data_rows) >= 5:  # Limit to 5 years
+                        break
+                else:
+                    # Debug first few rows
+                    if idx < 5:
+                        print(f"  [DEBUG] Row {idx} has {len(td_cells)} td cells + {len(th_cells)} th cells - skipping")
+            except:
+                continue
+        
+        if not data_rows:
+            print(f"  ⚠ Could not find data rows with td cells in target table")
+            return {}
+        
+        print(f"  ✓ Found {len(data_rows)} data rows")
+        
+        # Extract data from all rows
+        financial_history = []
+        for row_idx, data_row in enumerate(data_rows):
+            try:
+                # Get all cells (both td and th) to extract data
+                # Note: td cells come first, then th cells in the order they appear
+                td_cells = data_row.find_elements(By.TAG_NAME, "td")
+                th_cells = data_row.find_elements(By.TAG_NAME, "th")
+                
+                if row_idx == 0:  # Only print debug for first row
+                    print(f"  [DEBUG] Cell structure: {len(td_cells)} td cells, {len(th_cells)} th cells")
+                    print(f"  [DEBUG] TD cell values: {[cell.text.strip() for cell in td_cells]}")
+                    print(f"  [DEBUG] TH cell values: {[cell.text.strip() for cell in th_cells]}")
+                
+                # Build cells array in DOM order by getting all children
+                all_cell_elements = data_row.find_elements(By.XPATH, "./*[self::td or self::th]")
+                cells = all_cell_elements
+                
+                # Table columns: Financial Year | Revenue ('000) | Net ('000) | EPS | DP% | Net % | Report
+                if len(cells) >= 6:
+                    financial_year = cells[0].text.strip()
+                    revenue_text = cells[1].text.strip()
+                    net_text = cells[2].text.strip()
+                    eps_text = cells[3].text.strip()
+                    dp_percent_text = cells[4].text.strip()
+                    net_percent_text = cells[5].text.strip() if len(cells) > 5 else ""
+                    
+                    if row_idx == 0:  # Only print debug for first row
+                        print(f"  [DEBUG] Raw cell values:")
+                        print(f"    Cell 0 (Year): '{financial_year}'")
+                        print(f"    Cell 1 (Revenue): '{revenue_text}'")
+                        print(f"    Cell 2 (Net): '{net_text}'")
+                        print(f"    Cell 3 (EPS): '{eps_text}'")
+                        print(f"    Cell 4 (DP%): '{dp_percent_text}'")
+                        print(f"    Cell 5 (Net%): '{net_percent_text}'")
+                    
+                    # Add to history
+                    financial_history.append({
+                        "financial_year": financial_year,
+                        "revenue": _parse_float(revenue_text.replace(",", "")),
+                        "net": _parse_float(net_text.replace(",", "")),
+                        "eps": _parse_float(eps_text),
+                        "dp_percent": _parse_float(dp_percent_text.replace("%", "")),
+                        "net_percent": _parse_float(net_percent_text.replace("%", ""))
+                    })
+                    
+                    # First row data for backwards compatibility (keep existing fields)
+                    if row_idx == 0:
+                        financial_data["financial_year"] = financial_year
+                        financial_data["annual_revenue"] = _parse_float(revenue_text.replace(",", ""))
+                        financial_data["annual_net"] = _parse_float(net_text.replace(",", ""))
+                        financial_data["annual_eps"] = _parse_float(eps_text)
+                        financial_data["annual_dp_percent"] = _parse_float(dp_percent_text.replace("%", ""))
+                        financial_data["annual_net_percent"] = _parse_float(net_percent_text.replace("%", ""))
+                        
+                        print(f"  ✓ Extracted financial data:")
+                        print(f"    - Financial Year: {financial_year}")
+                        print(f"    - Revenue ('000): {financial_data['annual_revenue']}")
+                        print(f"    - Net ('000): {financial_data['annual_net']}")
+                        print(f"    - EPS: {financial_data['annual_eps']}")
+                        print(f"    - DP%: {financial_data['annual_dp_percent']}")
+                        print(f"    - Net%: {financial_data['annual_net_percent']}")
+            except Exception as e:
+                print(f"  ⚠ Error extracting data from row {row_idx}: {str(e)}")
+                continue
+        
+        # Store the history
+        if financial_history:
+            financial_data["financial_history"] = financial_history
+            print(f"  ✓ Stored {len(financial_history)} years of financial data")
+        
+        agent_logger.log_agent_end(
+            input_data={"company_code": company_code},
+            output_data=financial_data
+        )
+        
+        return financial_data
+        
+    except Exception as e:
+        error_msg = f"Error extracting financial data: {str(e)}"
+        print(f"  ⚠ {error_msg}")
+        agent_logger.error(error_msg)
+        return {}
+    finally:
+        if driver:
+            driver.quit()
+
+
+# Keep the old function name for backward compatibility (deprecated)
+def get_annual_report_pdfs_old(company_code: str) -> List[str]:
+    """
+    DEPRECATED: Old function that extracted PDF links.
+    Use get_annual_report_pdfs instead which now returns financial data.
+    
     Get all PDF links from the Annual Reports page for a company.
     
     This function:
@@ -884,6 +1408,7 @@ def get_annual_report_pdfs(company_code: str) -> List[str]:
                         " ir2" in combined_text or  # Pattern like IR2024, IR2025
                         "-ir2" in combined_text or
                         "ir 2" in combined_text or
+                        "ar" in combined_text.lower() and any(char.isdigit() for char in combined_text) or 
                         "integrated annual report" in combined_text or
                         "intergrated annual report" in combined_text or  # Common typo
                         "integrated report" in combined_text or  # Include Integrated Report PDFs
@@ -1326,7 +1851,7 @@ def get_companies_by_sector_name(sector: str) -> List[Company]:
         # Step 7: Fetch average volume for filtered companies
         if companies:
             print(f"  [STEP 7] Fetching average volume for {len(companies)} filtered companies...")
-            companies = fetch_average_volume_for_companies(companies)
+            companies = enrich_companies_with_volume_and_reports(companies)
             print(f"  ✓ Volume fetching complete")
         
         agent_logger.log_agent_end(
@@ -3116,7 +3641,7 @@ def _extract_companies_from_table(driver, sector: str) -> List[Company]:
                     # Remove [s] suffix from stock names
                     name = name.replace(" [s]", "").replace("[s]", "").strip()
                     code = cells[1].text.strip()
-                    price = _parse_float(cells[3].text.strip()) if len(cells) > 3 else None
+                    revenue = _parse_float(cells[7].text.strip()) if len(cells) > 7 else None  # Revenue typically in column 8 (index 7)
                     eps = _parse_float(cells[8].text.strip()) if len(cells) > 8 else None
                     pe_ratio = _parse_float(cells[11].text.strip()) if len(cells) > 11 else None
                     dividend_yield = _parse_float(cells[12].text.strip()) if len(cells) > 12 else None
@@ -3125,13 +3650,13 @@ def _extract_companies_from_table(driver, sector: str) -> List[Company]:
                     
                     # Debug first company to verify structure
                     if idx == 1:
-                        print(f"      [5.14.2.2] First company - name: '{name}', code: '{code}', detail_url: '{detail_url}', price: {price}, eps: {eps}, pe: {pe_ratio}, dy: {dividend_yield}, roe: {roe}, mcap: {market_cap}, sector: '{sector}'")
+                        print(f"      [5.14.2.2] First company - name: '{name}', code: '{code}', detail_url: '{detail_url}', revenue: {revenue}, eps: {eps}, pe: {pe_ratio}, dy: {dividend_yield}, roe: {roe}, mcap: {market_cap}, sector: '{sector}'")
                     
                     company = Company(
                         name=name,
                         code=code,
                         detail_url=detail_url,
-                        price=price,
+                        revenue=revenue,
                         eps=eps,
                         pe_ratio=pe_ratio,
                         dividend_yield=dividend_yield,

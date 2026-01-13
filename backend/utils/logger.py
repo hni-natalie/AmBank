@@ -2,8 +2,9 @@
 import logging
 import json
 from datetime import datetime
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, List
 from functools import wraps
+from collections import deque
 
 
 # Agent versions
@@ -12,6 +13,9 @@ AGENT_VERSIONS = {
     "sector_agent": "1.0.0",
     "bursa_agent": "1.0.0",
     "klse_sector_agent": "1.0.0",
+    "volume_filter_agent": "1.0.0",
+    "rsi_stochastic_agent": "1.0.0",
+    "company_query_agent": "1.0.0",
     "principles_engine": "1.0.0",
 }
 
@@ -22,7 +26,13 @@ ALGORITHM_VERSIONS = {
     "bursa_agent": "naive_mock_v1.0",
     "klse_sector_agent": "selenium_web_scraper_v1.0",
     "principles_engine": "rule_based_stub_v1.0",
+    "volume_filter_agent": "web_scraper_v1.0",
+    "rsi_stochastic_agent": "technical_indicator_analyzer_v1.0",
+    "company_query_agent": "ollama_llm_rag_v1.0",
 }
+
+# In-memory log storage (circular buffer to prevent memory issues)
+LOG_STORAGE = deque(maxlen=10000)  # Store up to 10,000 log entries
 
 
 class AgentLogger:
@@ -81,6 +91,9 @@ class AgentLogger:
         """Internal logging method."""
         log_entry = self._format_log_entry(level, message, input_data, output_data, **kwargs)
         
+        # Store log entry in memory
+        LOG_STORAGE.append(log_entry)
+        
         # Log as JSON for structured logging
         log_message = json.dumps(log_entry, default=str)
         
@@ -100,10 +113,6 @@ class AgentLogger:
         # Also print for console visibility (with timestamp)
         timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         print(f"[{timestamp}] [{level}] [{self.agent_name} v{self.agent_version}] {message}")
-        if input_data:
-            print(f"  Input: {json.dumps(input_data, default=str, indent=2)}")
-        if output_data:
-            print(f"  Output: {json.dumps(output_data, default=str, indent=2)}")
     
     def info(self, message: str, input_data: Optional[Dict[str, Any]] = None,
             output_data: Optional[Dict[str, Any]] = None, **kwargs):
@@ -208,3 +217,40 @@ def log_agent_execution(agent_name: str):
         
         return wrapper
     return decorator
+
+
+def get_all_logs(agent_name: Optional[str] = None, level: Optional[str] = None, 
+                 limit: Optional[int] = None) -> List[Dict[str, Any]]:
+    """
+    Retrieve all stored log entries.
+    
+    Args:
+        agent_name: Optional filter by agent name
+        level: Optional filter by log level (INFO, DEBUG, WARNING, ERROR, CRITICAL)
+        limit: Optional limit on number of logs to return (most recent first)
+        
+    Returns:
+        List of log entries
+    """
+    logs = list(LOG_STORAGE)
+    
+    # Apply filters
+    if agent_name:
+        logs = [log for log in logs if log.get("agent_name") == agent_name]
+    
+    if level:
+        logs = [log for log in logs if log.get("level") == level.upper()]
+    
+    # Reverse to get most recent first
+    logs.reverse()
+    
+    # Apply limit
+    if limit:
+        logs = logs[:limit]
+    
+    return logs
+
+
+def clear_logs():
+    """Clear all stored logs."""
+    LOG_STORAGE.clear()

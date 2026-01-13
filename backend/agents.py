@@ -4,10 +4,28 @@ import requests
 from bs4 import BeautifulSoup
 import time
 import logging
+import re
+import json
 from datetime import datetime
 from schemas.signals import MacroSignal
 from schemas.company import Company, SectorCompanies
+from schemas.company_query import CompanyQueryResponse
 from utils.logger import AgentLogger, log_agent_execution
+
+# Try to import ollama, fallback if not available
+try:
+    import ollama
+    OLLAMA_AVAILABLE = True
+except ImportError:
+    OLLAMA_AVAILABLE = False
+    print("Warning: ollama package not available. Install with: pip install ollama")
+
+try:
+    import numpy as np
+    NUMPY_AVAILABLE = True
+except ImportError:
+    NUMPY_AVAILABLE = False
+    print("Warning: numpy package not available. Install with: pip install numpy")
 
 # Set up logging configuration
 logging.basicConfig(
@@ -191,21 +209,2182 @@ SECTOR_MAPPING = {
     "reit": "Real Estate Investment Trusts"
 }
 
-SECTOR_STYLE = {
-    "Technology": "Growth",
-    "Health Care": "Growth",
-    "Telecommunications & Media": "Growth",
-    "Transportation & Logistics": "Growth",
-    "Financial Services": "Value",
-    "Utilities": "Value",
-    "Real Estate Investment Trusts": "Value",
-    "Energy": "Value",
-    "Plantation": "Value",
-    "Property": "Value",
-    "Consumer Products & Services": "Blend",
-    "Industrial Products & Services": "Blend",
-    "Construction": "Blend"
-}
+@log_agent_execution("fetch_volume_agent")
+def fetch_average_volume_for_companies(companies: List[Company]) -> List[Company]:
+    """
+    Fetch Average Volume (3M) from company detail pages.
+    
+    This agent accesses each company's detail_url and extracts the "Average Volume (3M)" 
+    value, populating the average_volume field for each company.
+    
+    Args:
+        companies: List of Company objects to fetch volume for
+        
+    Returns:
+        List of Company objects with average_volume field populated
+    """
+    agent_logger = AgentLogger("fetch_volume_agent")
+    agent_logger.log_agent_start({"total_companies": len(companies)})
+    
+    print(f"[FETCH_VOLUME] Starting volume extraction for {len(companies)} companies")
+    
+    skipped_no_url = 0
+    errors = 0
+    success_count = 0
+    
+    for idx, company in enumerate(companies, 1):
+        try:
+            # Skip if no detail_url
+            if not company.detail_url:
+                print(f"  [FETCH_VOLUME.{idx}] Skipping {company.name} ({company.code}): No detail_url")
+                company.average_volume = None
+                skipped_no_url += 1
+                continue
+            
+            print(f"  [FETCH_VOLUME.{idx}] Fetching detail page for {company.name} ({company.code})...")
+            print(f"    URL: {company.detail_url}")
+            
+            # Fetch the detail page
+            headers = {
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
+            }
+            response = requests.get(company.detail_url, headers=headers, timeout=10)
+            
+            if response.status_code != 200:
+                print(f"    ⚠ Failed to fetch page: HTTP {response.status_code}")
+                errors += 1
+                company.average_volume = None
+                continue
+            
+            # Parse the HTML
+            soup = BeautifulSoup(response.content, 'lxml')
+            
+            # Extract "Average Volume (3M)" value
+            # Look for text containing "Average Volume" or "Average Volume (3M)"
+            average_volume = None
+            page_text = soup.get_text()
+            
+            # Try multiple strategies to find the value
+            # Strategy 1: Look for "Average Volume (3M)" followed by a number
+            # More specific patterns that avoid matching random zeros
+            patterns = [
+                r"Average Volume\s*\(3M\)\s*[:\-]?\s*([\d,]+(?:\.\d+)?)",
+                r"Average Volume\s*\(3M\)[^\d]*([\d,]+(?:\.\d+)?)",
+                r"Average Volume\s*\(3M\)[^0-9]*([1-9][\d,]*(?:\.[\d]+)?)",  # Must start with non-zero digit
+            ]
+            
+            for pattern in patterns:
+                match = re.search(pattern, page_text, re.IGNORECASE)
+                if match:
+                    volume_str = match.group(1).replace(',', '').strip()
+                    try:
+                        volume_value = float(volume_str)
+                        # Only accept if it's a meaningful value (not just 0 from noise)
+                        if volume_value > 0 or (volume_value == 0 and "0" in match.group(0) and "Average Volume" in match.group(0)):
+                            average_volume = volume_value
+                            print(f"    ✓ Found Average Volume (3M): {average_volume:,.0f} (pattern: {pattern[:50]}...)")
+                            break
+                    except ValueError:
+                        continue
+            
+            # Strategy 2: Look in tables for "Average Volume" row
+            if average_volume is None:
+                try:
+                    tables = soup.find_all("table")
+                    for table in tables:
+                        rows = table.find_all("tr")
+                        for row in rows:
+                            cells = row.find_all(["td", "th"])
+                            if len(cells) >= 2:
+                                cell_text = cells[0].get_text(strip=True)
+                                if "average volume" in cell_text.lower() and "3m" in cell_text.lower():
+                                    value_cell = cells[1].get_text(strip=True)
+                                    # Extract number from value cell - look for meaningful numbers
+                                    # Try to find numbers with commas (formatted numbers) or large numbers
+                                    volume_match = re.search(r"([\d,]+(?:\.\d+)?)", value_cell.replace(',', ''))
+                                    if volume_match:
+                                        try:
+                                            volume_value = float(volume_match.group(1).replace(',', ''))
+                                            average_volume = volume_value
+                                            print(f"    ✓ Found Average Volume (3M) in table: {average_volume:,.0f}")
+                                            print(f"      Table cell text: '{cell_text}' -> '{value_cell}'")
+                                            break
+                                        except ValueError:
+                                            continue
+                        if average_volume is not None:
+                            break
+                except Exception as e:
+                    print(f"    ⚠ Error searching tables: {str(e)}")
+            
+            # Strategy 3: Look for specific div/span elements with volume data
+            if average_volume is None:
+                try:
+                    # Look for elements containing "Average Volume" and "3M"
+                    volume_elements = soup.find_all(string=re.compile(r"Average Volume.*3M|3M.*Average Volume", re.IGNORECASE))
+                    for elem in volume_elements:
+                        parent = elem.parent
+                        if parent:
+                            # Look for numbers nearby - get more context
+                            nearby_text = parent.get_text()
+                            # Look for number after "Average Volume (3M)" pattern
+                            volume_match = re.search(r"Average Volume\s*\(3M\)[^\d]*([\d,]+(?:\.\d+)?)", nearby_text, re.IGNORECASE)
+                            if volume_match:
+                                try:
+                                    volume_value = float(volume_match.group(1).replace(',', ''))
+                                    average_volume = volume_value
+                                    print(f"    ✓ Found Average Volume (3M) in element: {average_volume:,.0f}")
+                                    print(f"      Element text: '{nearby_text[:100]}...'")
+                                    break
+                                except ValueError:
+                                    continue
+                except Exception as e:
+                    print(f"    ⚠ Error searching elements: {str(e)}")
+            
+            # Debug: If still not found, log a sample of the page text
+            if average_volume is None:
+                # Look for any mention of "Average Volume" in the page
+                avg_vol_mentions = re.findall(r"Average Volume[^\n]{0,100}", page_text, re.IGNORECASE)
+                if avg_vol_mentions:
+                    print(f"    ⚠ Found 'Average Volume' mentions but couldn't extract value:")
+                    for mention in avg_vol_mentions[:3]:  # Show first 3 mentions
+                        print(f"      - '{mention.strip()}'")
+                print(f"    ⚠ Could not find Average Volume (3M)")
+            else:
+                success_count += 1
+            
+            # Update company with average_volume value
+            company.average_volume = average_volume
+            
+            # Small delay to avoid overwhelming the server
+            time.sleep(0.3)
+            
+        except requests.exceptions.RequestException as e:
+            print(f"  [FETCH_VOLUME.{idx}] ⚠ Request error for {company.name}: {str(e)}")
+            errors += 1
+            company.average_volume = None
+        except Exception as e:
+            print(f"  [FETCH_VOLUME.{idx}] ⚠ Error processing {company.name}: {str(e)}")
+            errors += 1
+            company.average_volume = None
+    
+    print(f"[FETCH_VOLUME] ✓ Volume extraction complete:")
+    print(f"  - Total companies: {len(companies)}")
+    print(f"  - Successfully fetched: {success_count}")
+    print(f"  - Skipped (no URL): {skipped_no_url}")
+    print(f"  - Errors: {errors}")
+    
+    agent_logger.log_agent_end(
+        input_data={"total_companies": len(companies)},
+        output_data={
+            "total_companies": len(companies),
+            "success_count": success_count,
+            "skipped_no_url": skipped_no_url,
+            "errors": errors
+        }
+    )
+    
+    return companies
+
+
+@log_agent_execution("fetch_annual_reports_agent")
+def fetch_annual_reports_for_companies(companies: List[Company]) -> List[Company]:
+    """
+    Fetch annual report PDFs for a list of companies.
+    
+    This agent takes a list of Company objects, extracts their company codes,
+    and fetches the annual report PDFs for each company.
+    
+    Args:
+        companies: List of Company objects
+        
+    Returns:
+        List of Company objects with annual_report_pdfs field populated
+    """
+    agent_logger = AgentLogger("fetch_annual_reports_agent")
+    agent_logger.log_agent_start({"total_companies": len(companies)})
+    
+    print(f"[FETCH_ANNUAL_REPORTS] Starting annual report extraction for {len(companies)} companies")
+    
+    skipped_no_code = 0
+    errors = 0
+    success_count = 0
+    
+    for idx, company in enumerate(companies, 1):
+        try:
+            # Skip if no company code
+            if not company.code:
+                print(f"  [FETCH_ANNUAL_REPORTS.{idx}] Skipping {company.name}: No company code")
+                company.annual_report_pdfs = []
+                skipped_no_code += 1
+                continue
+            
+            print(f"  [FETCH_ANNUAL_REPORTS.{idx}] Fetching annual reports for {company.name} ({company.code})...")
+            
+            # Fetch annual report PDFs
+            pdf_urls = get_annual_report_pdfs(company.code)
+            
+            if pdf_urls:
+                company.annual_report_pdfs = pdf_urls
+                print(f"    ✓ Found {len(pdf_urls)} annual report PDF(s)")
+                success_count += 1
+            else:
+                company.annual_report_pdfs = []
+                print(f"    ⚠ No annual report PDFs found")
+            
+        except Exception as e:
+            print(f"  [FETCH_ANNUAL_REPORTS.{idx}] ⚠ Error processing {company.name}: {str(e)}")
+            errors += 1
+            company.annual_report_pdfs = []
+    
+    print(f"[FETCH_ANNUAL_REPORTS] ✓ Annual report extraction complete:")
+    print(f"  - Total companies: {len(companies)}")
+    print(f"  - Successfully fetched: {success_count}")
+    print(f"  - Skipped (no code): {skipped_no_code}")
+    print(f"  - Errors: {errors}")
+    
+    agent_logger.log_agent_end(
+        input_data={"total_companies": len(companies)},
+        output_data={
+            "total_companies": len(companies),
+            "success_count": success_count,
+            "skipped_no_code": skipped_no_code,
+            "errors": errors
+        }
+    )
+    
+    return companies
+
+
+@log_agent_execution("rsi_stochastic_agent")
+def analyze_companies_rsi_stochastic(companies: List[Company]) -> List[Company]:
+    """
+    Analyze companies based on RSI(14) and Stochastic(14) indicators.
+    
+    This agent accesses each company's detail_url, extracts RSI(14) and Stochastic(14) 
+    values, and determines trading action based on:
+    - RSI <= 35 AND Stochastic <= 25 → Buy
+    - RSI >= 70 AND Stochastic >= 75 → Sell
+    - Otherwise → Hold
+    
+    Args:
+        companies: List of Company objects to analyze
+        
+    Returns:
+        List of Company objects with RSI, Stochastic, and action fields populated
+    """
+    agent_logger = AgentLogger("rsi_stochastic_agent")
+    agent_logger.log_agent_start({"total_companies": len(companies)})
+    
+    print(f"[RSI_STOCHASTIC] Starting RSI/Stochastic analysis for {len(companies)} companies")
+    
+    analyzed_companies = []
+    errors = 0
+    
+    for idx, company in enumerate(companies, 1):
+        try:
+            # Skip if no detail_url
+            if not company.detail_url:
+                print(f"  [RSI_STOCHASTIC.{idx}] Skipping {company.name} ({company.code}): No detail_url")
+                company.action = "hold"  # Default to hold if no URL
+                analyzed_companies.append(company)
+                continue
+            
+            print(f"  [RSI_STOCHASTIC.{idx}] Analyzing {company.name} ({company.code})...")
+            print(f"    URL: {company.detail_url}")
+            
+            # Fetch the detail page
+            headers = {
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
+            }
+            response = requests.get(company.detail_url, headers=headers, timeout=10)
+            
+            if response.status_code != 200:
+                print(f"    ⚠ Failed to fetch page: HTTP {response.status_code}")
+                errors += 1
+                company.rsi = None
+                company.stochastic = None
+                company.action = "hold"  # Default to hold on error
+                analyzed_companies.append(company)
+                continue
+            
+            # Parse the HTML
+            soup = BeautifulSoup(response.content, 'lxml')
+            page_text = soup.get_text()
+            
+            # Extract RSI(14) value
+            rsi = None
+            rsi_patterns = [
+                r"RSI\(14\)[^\d]*([\d]+\.?\d*)",
+                r"RSI\s*\(14\)[^\d]*([\d]+\.?\d*)",
+                r"RSI\(14\)[:\-]?\s*([\d]+\.?\d*)",
+                r"RSI\s*14[^\d]*([\d]+\.?\d*)",
+            ]
+            
+            for pattern in rsi_patterns:
+                match = re.search(pattern, page_text, re.IGNORECASE)
+                if match:
+                    try:
+                        rsi = float(match.group(1))
+                        print(f"    ✓ Found RSI(14): {rsi}")
+                        break
+                    except ValueError:
+                        continue
+            
+            # Extract Stochastic(14) value
+            stochastic = None
+            stochastic_patterns = [
+                r"Stochastic\(14\)[^\d]*([\d]+\.?\d*)",
+                r"Stochastic\s*\(14\)[^\d]*([\d]+\.?\d*)",
+                r"Stochastic\(14\)[:\-]?\s*([\d]+\.?\d*)",
+                r"Stochastic\s*14[^\d]*([\d]+\.?\d*)",
+            ]
+            
+            for pattern in stochastic_patterns:
+                match = re.search(pattern, page_text, re.IGNORECASE)
+                if match:
+                    try:
+                        stochastic = float(match.group(1))
+                        print(f"    ✓ Found Stochastic(14): {stochastic}")
+                        break
+                    except ValueError:
+                        continue
+            
+            # Try table-based extraction if regex didn't work
+            if rsi is None or stochastic is None:
+                try:
+                    tables = soup.find_all("table")
+                    for table in tables:
+                        rows = table.find_all("tr")
+                        for row in rows:
+                            cells = row.find_all(["td", "th"])
+                            if len(cells) >= 2:
+                                cell_text = cells[0].get_text(strip=True)
+                                value_cell = cells[1].get_text(strip=True)
+                                
+                                # Look for RSI
+                                if rsi is None and "rsi" in cell_text.lower() and "14" in cell_text.lower():
+                                    value_match = re.search(r"([\d]+\.?\d*)", value_cell)
+                                    if value_match:
+                                        try:
+                                            rsi = float(value_match.group(1))
+                                            print(f"    ✓ Found RSI(14) in table: {rsi}")
+                                        except ValueError:
+                                            pass
+                                
+                                # Look for Stochastic
+                                if stochastic is None and "stochastic" in cell_text.lower() and "14" in cell_text.lower():
+                                    value_match = re.search(r"([\d]+\.?\d*)", value_cell)
+                                    if value_match:
+                                        try:
+                                            stochastic = float(value_match.group(1))
+                                            print(f"    ✓ Found Stochastic(14) in table: {stochastic}")
+                                        except ValueError:
+                                            pass
+                                
+                                if rsi is not None and stochastic is not None:
+                                    break
+                        if rsi is not None and stochastic is not None:
+                            break
+                except Exception as e:
+                    print(f"    ⚠ Error searching tables: {str(e)}")
+            
+            # Store values
+            company.rsi = rsi
+            company.stochastic = stochastic
+            
+            # Determine action based on rules
+            if rsi is not None and stochastic is not None:
+                if rsi <= 35 and stochastic <= 25:
+                    company.action = "buy"
+                    print(f"    ✓ Action: BUY (RSI={rsi} <= 35 AND Stochastic={stochastic} <= 25)")
+                elif rsi >= 70 and stochastic >= 75:
+                    company.action = "sell"
+                    print(f"    ✓ Action: SELL (RSI={rsi} >= 70 AND Stochastic={stochastic} >= 75)")
+                else:
+                    company.action = "hold"
+                    print(f"    ✓ Action: HOLD (RSI={rsi}, Stochastic={stochastic})")
+            else:
+                company.action = "hold"  # Default to hold if values not found
+                if rsi is None:
+                    print(f"    ⚠ RSI(14) not found, defaulting to hold")
+                if stochastic is None:
+                    print(f"    ⚠ Stochastic(14) not found, defaulting to hold")
+            
+            analyzed_companies.append(company)
+            
+            # Small delay to avoid overwhelming the server
+            time.sleep(0.5)
+            
+        except requests.exceptions.RequestException as e:
+            print(f"  [RSI_STOCHASTIC.{idx}] ⚠ Request error for {company.name}: {str(e)}")
+            errors += 1
+            company.rsi = None
+            company.stochastic = None
+            company.action = "hold"
+            analyzed_companies.append(company)
+        except Exception as e:
+            print(f"  [RSI_STOCHASTIC.{idx}] ⚠ Error processing {company.name}: {str(e)}")
+            errors += 1
+            company.rsi = None
+            company.stochastic = None
+            company.action = "hold"
+            analyzed_companies.append(company)
+    
+    # Count actions
+    buy_count = sum(1 for c in analyzed_companies if c.action == "buy")
+    sell_count = sum(1 for c in analyzed_companies if c.action == "sell")
+    hold_count = sum(1 for c in analyzed_companies if c.action == "hold")
+    
+    print(f"[RSI_STOCHASTIC] ✓ Analysis complete:")
+    print(f"  - Total companies: {len(analyzed_companies)}")
+    print(f"  - Buy signals: {buy_count}")
+    print(f"  - Sell signals: {sell_count}")
+    print(f"  - Hold signals: {hold_count}")
+    print(f"  - Errors: {errors}")
+    
+    agent_logger.log_agent_end(
+        input_data={"total_companies": len(companies)},
+        output_data={
+            "analyzed_count": len(analyzed_companies),
+            "buy_signals": buy_count,
+            "sell_signals": sell_count,
+            "hold_signals": hold_count,
+            "errors": errors
+        }
+    )
+    
+    return analyzed_companies
+
+
+def _get_available_model(preferred: str = "llama3.2") -> str:
+    """
+    Get an available Ollama model, preferring the specified one.
+    
+    Args:
+        preferred: Preferred model name (default: llama3.2)
+        
+    Returns:
+        Available model name
+    """
+    if not OLLAMA_AVAILABLE:
+        raise ImportError("Ollama package not available. Install with: pip install ollama")
+    
+    try:
+        models = ollama.list()
+        available_models = [model.get('name', '') for model in models.get('models', [])]
+        
+        if preferred in available_models:
+            return preferred
+        
+        if available_models:
+            print(f"  ⚠ Preferred model '{preferred}' not found. Using '{available_models[0]}' instead.")
+            return available_models[0]
+        
+        raise Exception("No Ollama models available. Pull a model with: ollama pull llama3.2")
+    except Exception as e:
+        if "not found" in str(e).lower() or "no models" in str(e).lower():
+            raise Exception(f"No Ollama models available. Pull a model with: ollama pull {preferred}")
+        raise
+
+
+def _call_ollama(prompt: str, model: str = "llama3.2") -> str:
+    """
+    Call Ollama LLM with a prompt.
+    
+    Args:
+        prompt: The prompt to send to the LLM
+        model: The Ollama model to use (default: llama3.2)
+        
+    Returns:
+        LLM response text
+    """
+    if not OLLAMA_AVAILABLE:
+        raise ImportError("Ollama package not available. Install with: pip install ollama")
+    
+    try:
+        # Get an available model (fallback if specified model not found)
+        available_model = _get_available_model(model)
+        
+        response = ollama.chat(model=available_model, messages=[
+            {"role": "user", "content": prompt}
+        ])
+        return response['message']['content']
+    except Exception as e:
+        error_msg = str(e)
+        if "not found" in error_msg.lower():
+            raise Exception(f"Ollama model '{model}' not found. Available models: {_get_available_models_list()}. Pull the model with: ollama pull {model}")
+        raise Exception(f"Ollama API error: {str(e)}")
+
+
+def _get_available_models_list() -> str:
+    """Get a comma-separated list of available models."""
+    try:
+        if not OLLAMA_AVAILABLE:
+            return "N/A"
+        models = ollama.list()
+        available_models = [model.get('name', '') for model in models.get('models', [])]
+        return ", ".join(available_models) if available_models else "None"
+    except:
+        return "N/A"
+
+
+@log_agent_execution("annual_report_agent")
+def get_annual_report_pdfs(company_code: str) -> List[str]:
+    """
+    Get all PDF links from the Annual Reports page for a company.
+    
+    This function:
+    1. Navigates to the company detail page
+    2. Clicks on the "Annual" link
+    3. Clicks on the first "View" link
+    4. Extracts all PDF file URLs
+    
+    Args:
+        company_code: Company code (e.g., "5211", "1295")
+        
+    Returns:
+        List of PDF URLs
+        
+    Example:
+        pdfs = get_annual_report_pdfs("5211")
+    """
+    agent_logger = AgentLogger("annual_report_agent")
+    agent_logger.log_agent_start({"company_code": company_code})
+    
+    print(f"[ANNUAL_REPORTS] Starting PDF extraction for company code: {company_code}")
+    
+    try:
+        from selenium import webdriver
+        from selenium.webdriver.common.by import By
+        from selenium.webdriver.support.ui import WebDriverWait
+        from selenium.webdriver.support import expected_conditions as EC
+        from selenium.webdriver.chrome.options import Options
+        from selenium.webdriver.chrome.service import Service
+    except ImportError:
+        error_msg = "Selenium not available"
+        print(f"  ⚠ {error_msg}")
+        agent_logger.error(error_msg)
+        return []
+    
+    detail_url = f"https://www.klsescreener.com/v2/stocks/view/{company_code}"
+    driver = None
+    pdf_urls = []
+    
+    try:
+        # Configure Chrome options
+        chrome_options = Options()
+        chrome_options.add_argument("--headless")
+        chrome_options.add_argument("--no-sandbox")
+        chrome_options.add_argument("--disable-dev-shm-usage")
+        chrome_options.add_argument("--window-size=1920,1080")
+        chrome_options.add_argument("user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
+        
+        # Initialize driver
+        try:
+            service = Service()
+            driver = webdriver.Chrome(service=service, options=chrome_options)
+        except:
+            driver = webdriver.Chrome(options=chrome_options)
+        
+        # Step 1: Navigate to company detail page
+        print(f"  [STEP 1] Navigating to {detail_url}...")
+        driver.get(detail_url)
+        time.sleep(3)
+        print(f"  [STEP 1.1] Current URL: {driver.current_url}")
+        print(f"  [STEP 1.2] Page title: {driver.title}")
+        
+        # Debug: Print all links on the page
+        print(f"  [DEBUG] Finding all links on the page...")
+        all_links = driver.find_elements(By.TAG_NAME, "a")
+        print(f"  [DEBUG] Found {len(all_links)} links on the page")
+        
+        # Print links that might be related to Annual
+        annual_related = []
+        for link in all_links:
+            try:
+                text = link.text.strip()
+                href = link.get_attribute("href") or ""
+                if text and ("annual" in text.lower() or "report" in text.lower() or "financial" in text.lower()):
+                    annual_related.append(f"    - Text: '{text}' | Href: '{href}'")
+            except:
+                continue
+        
+        if annual_related:
+            print(f"  [DEBUG] Links related to Annual/Reports:")
+            for link_info in annual_related[:10]:  # Show first 10
+                print(link_info)
+        else:
+            print(f"  [DEBUG] No links found containing 'annual', 'report', or 'financial'")
+        
+        # Step 2: Find and click "Annual" link
+        print(f"  [STEP 2] Looking for 'Annual' link...")
+        annual_link = None
+        
+        # Try multiple selectors for Annual link
+        annual_selectors = [
+            (By.LINK_TEXT, "Annual"),
+            (By.PARTIAL_LINK_TEXT, "Annual"),
+            (By.XPATH, "//a[contains(text(), 'Annual')]"),
+            (By.XPATH, "//a[contains(@href, 'annual')]"),
+            (By.XPATH, "//a[contains(translate(text(), 'ANNUAL', 'annual'), 'annual')]"),
+        ]
+        
+        for selector_type, selector_value in annual_selectors:
+            try:
+                annual_link = WebDriverWait(driver, 5).until(
+                    EC.presence_of_element_located((selector_type, selector_value))
+                )
+                print(f"  ✓ Found 'Annual' link using: {selector_type} = '{selector_value}'")
+                print(f"    Link text: '{annual_link.text}'")
+                print(f"    Link href: '{annual_link.get_attribute('href')}'")
+                break
+            except Exception as e:
+                print(f"  ⚠ Failed with {selector_type}: {str(e)[:100]}")
+                continue
+        
+        if not annual_link:
+            print(f"  ⚠ 'Annual' link not found on page")
+            print(f"  [DEBUG] Saving page source for inspection...")
+            page_source_snippet = driver.page_source[:2000]
+            print(f"  [DEBUG] Page source (first 2000 chars):\n{page_source_snippet}")
+            return []
+        
+        # Check if link is clickable
+        print(f"  [STEP 2.1] Checking if 'Annual' link is clickable...")
+        try:
+            WebDriverWait(driver, 5).until(
+                EC.element_to_be_clickable((By.XPATH, f"//a[text()='{annual_link.text}']"))
+            )
+            print(f"  ✓ 'Annual' link is clickable")
+        except:
+            print(f"  ⚠ 'Annual' link may not be clickable, attempting anyway...")
+        
+        # Click the Annual link
+        print(f"  [STEP 2.2] Clicking 'Annual' link...")
+        current_url_before = driver.current_url
+        driver.execute_script("arguments[0].scrollIntoView(true);", annual_link)
+        time.sleep(0.5)
+        
+        try:
+            annual_link.click()
+            print(f"  ✓ Clicked 'Annual' link")
+        except Exception as e:
+            print(f"  ⚠ Normal click failed: {str(e)[:100]}, trying JavaScript click...")
+            driver.execute_script("arguments[0].click();", annual_link)
+            print(f"  ✓ Clicked 'Annual' link using JavaScript")
+        
+        time.sleep(3)
+        current_url_after = driver.current_url
+        print(f"  [STEP 2.3] URL before click: {current_url_before}")
+        print(f"  [STEP 2.4] URL after click: {current_url_after}")
+        print(f"  [STEP 2.5] Page title after click: {driver.title}")
+        
+        if current_url_before == current_url_after:
+            print(f"  ⚠ URL did not change after clicking Annual link - page may not have navigated")
+        else:
+            print(f"  ✓ URL changed - successfully navigated to new page")
+        
+        # Step 3: Find and click first "View" link
+        print(f"  [STEP 3] Looking for first 'View' link...")
+        
+        # Debug: Print all links on current page
+        print(f"  [DEBUG] Finding all links on the current page...")
+        all_links_now = driver.find_elements(By.TAG_NAME, "a")
+        print(f"  [DEBUG] Found {len(all_links_now)} links on the current page")
+        
+        # Print links that contain "View" or might be relevant
+        view_related = []
+        for idx, link in enumerate(all_links_now[:50]):  # Check first 50 links
+            try:
+                text = link.text.strip()
+                href = link.get_attribute("href") or ""
+                if text and ("view" in text.lower() or "pdf" in href.lower() or "download" in text.lower()):
+                    view_related.append(f"    [{idx}] Text: '{text}' | Href: '{href[:100]}'")
+            except:
+                continue
+        
+        if view_related:
+            print(f"  [DEBUG] Links related to View/PDF/Download:")
+            for link_info in view_related[:20]:  # Show first 20
+                print(link_info)
+        else:
+            print(f"  [DEBUG] No links found containing 'view', 'pdf', or 'download'")
+        
+        view_link = None
+        
+        # Try multiple selectors for View link
+        view_selectors = [
+            (By.LINK_TEXT, "View"),
+            (By.PARTIAL_LINK_TEXT, "View"),
+            (By.XPATH, "//a[contains(text(), 'View')]"),
+            (By.XPATH, "//a[contains(@href, 'view')]"),
+            (By.XPATH, "//a[contains(translate(text(), 'VIEW', 'view'), 'view')]"),
+        ]
+        
+        for selector_type, selector_value in view_selectors:
+            try:
+                # Find the first View link
+                view_link = WebDriverWait(driver, 5).until(
+                    EC.presence_of_element_located((selector_type, selector_value))
+                )
+                print(f"  ✓ Found first 'View' link using: {selector_type} = '{selector_value}'")
+                print(f"    Link text: '{view_link.text}'")
+                print(f"    Link href: '{view_link.get_attribute('href')}'")
+                break
+            except Exception as e:
+                print(f"  ⚠ Failed with {selector_type}: {str(e)[:100]}")
+                continue
+        
+        if not view_link:
+            print(f"  ⚠ 'View' link not found on page")
+            print(f"  [DEBUG] Saving page source for inspection...")
+            page_source_snippet = driver.page_source[:2000]
+            print(f"  [DEBUG] Page source (first 2000 chars):\n{page_source_snippet}")
+            return []
+        
+        # Check if link is clickable
+        print(f"  [STEP 3.1] Checking if 'View' link is clickable...")
+        try:
+            WebDriverWait(driver, 5).until(
+                EC.element_to_be_clickable((By.XPATH, f"//a[text()='{view_link.text}']"))
+            )
+            print(f"  ✓ 'View' link is clickable")
+        except:
+            print(f"  ⚠ 'View' link may not be clickable, attempting anyway...")
+        
+        # Click the first View link
+        print(f"  [STEP 3.2] Clicking first 'View' link...")
+        current_url_before_view = driver.current_url
+        driver.execute_script("arguments[0].scrollIntoView(true);", view_link)
+        time.sleep(0.5)
+        
+        try:
+            view_link.click()
+            print(f"  ✓ Clicked first 'View' link")
+        except Exception as e:
+            print(f"  ⚠ Normal click failed: {str(e)[:100]}, trying JavaScript click...")
+            driver.execute_script("arguments[0].click();", view_link)
+            print(f"  ✓ Clicked 'View' link using JavaScript")
+        
+        time.sleep(3)
+        current_url_after_view = driver.current_url
+        print(f"  [STEP 3.3] URL before click: {current_url_before_view}")
+        print(f"  [STEP 3.4] URL after click: {current_url_after_view}")
+        print(f"  [STEP 3.5] Page title after click: {driver.title}")
+        
+        if current_url_before_view == current_url_after_view:
+            print(f"  ⚠ URL did not change after clicking View link - checking for new tab or iframe...")
+            # Check if new window/tab was opened
+            if len(driver.window_handles) > 1:
+                print(f"  ✓ New window/tab opened, switching to it...")
+                driver.switch_to.window(driver.window_handles[-1])
+                print(f"  [STEP 3.6] New tab URL: {driver.current_url}")
+                time.sleep(2)
+            else:
+                print(f"  ⚠ No new window opened and URL didn't change")
+        else:
+            print(f"  ✓ URL changed - successfully navigated to new page")
+        
+        # Step 4: Extract all PDF attachments from announcement page
+        print(f"  [STEP 4] Extracting PDF attachments from announcement page...")
+        print(f"  [STEP 4.1] Current URL: {driver.current_url}")
+        
+        # Strategy 1: Look for attachment links (common patterns for announcements pages)
+        print(f"  [STEP 4.2] Looking for attachment links...")
+        
+        # Try to find attachments section
+        attachment_selectors = [
+            (By.XPATH, "//a[contains(@href, '.pdf')]"),
+            (By.XPATH, "//a[contains(@href, '/attachments/')]"),
+            (By.XPATH, "//a[contains(@href, '/download/')]"),
+            (By.XPATH, "//div[contains(@class, 'attachment')]//a"),
+            (By.XPATH, "//div[contains(@class, 'file')]//a"),
+            (By.CSS_SELECTOR, "a[href*='.pdf']"),
+        ]
+        
+        all_attachment_links = []
+        for selector_type, selector_value in attachment_selectors:
+            try:
+                links = driver.find_elements(selector_type, selector_value)
+                all_attachment_links.extend(links)
+                if links:
+                    print(f"  ✓ Found {len(links)} links using: {selector_type}")
+            except:
+                continue
+        
+        # Remove duplicates based on href
+        seen_hrefs = set()
+        unique_links = []
+        for link in all_attachment_links:
+            try:
+                href = link.get_attribute("href")
+                if href and href not in seen_hrefs:
+                    seen_hrefs.add(href)
+                    unique_links.append(link)
+            except:
+                continue
+        
+        print(f"  [DEBUG] Found {len(unique_links)} unique attachment links")
+        
+        # Extract PDF information (filter for IR/IAR/Integrated Annual Report only)
+        for idx, link in enumerate(unique_links, 1):
+            try:
+                href = link.get_attribute("href")
+                link_text = link.text.strip()
+                
+                # Check if it's a PDF
+                if href and (".pdf" in href.lower() or "pdf" in link_text.lower()):
+                    # Filter: Only include PDFs with IR, IAR, or "Integrated Annual Report" keywords
+                    combined_text = f"{link_text} {href}".lower()
+                    
+                    # Exclude ESG and CG reports first
+                    is_excluded = (
+                        "esg" in combined_text or
+                        "cg report" in combined_text or
+                        "corporate governance" in combined_text or
+                        "sustainability report" in combined_text or
+                        "sr2" in combined_text  # Pattern like SR2024
+                    )
+                    
+                    if is_excluded:
+                        print(f"    [{idx}] ⊗ Skipped (ESG/CG/SR): {link_text}")
+                        continue
+                    
+                    # Check for IR/IAR/Annual Report/Integrated Report keywords (must be specific patterns)
+                    is_iar = (
+                        " iar" in combined_text or 
+                        "-iar" in combined_text or
+                        "iar2" in combined_text or  # Pattern like IAR2024
+                        "iar " in combined_text or
+                        combined_text.startswith("iar") or
+                        " ir2" in combined_text or  # Pattern like IR2024, IR2025
+                        "-ir2" in combined_text or
+                        "ir 2" in combined_text or
+                        "integrated annual report" in combined_text or
+                        "intergrated annual report" in combined_text or  # Common typo
+                        "integrated report" in combined_text or  # Include Integrated Report PDFs
+                        "annual report" in combined_text or  # Include Annual Report PDFs
+                        (combined_text.startswith("ir") and any(char.isdigit() for char in combined_text[:6]))  # IR followed by digits
+                    )
+                    
+                    if is_iar:
+                        pdf_urls.append(href)
+                        print(f"    [{idx}] ✓ IAR PDF: {link_text}")
+                        print(f"        URL: {href}")
+                    else:
+                        print(f"    [{idx}] ⊗ Skipped (not IAR): {link_text}")
+            except Exception as e:
+                print(f"    [{idx}] ⚠ Error extracting link: {str(e)[:100]}")
+                continue
+        
+        # Strategy 2: If no PDFs found, search all links on the page
+        if not pdf_urls:
+            print(f"  [STEP 4.3] No IAR PDFs found with attachment selectors, scanning all links...")
+            all_links = driver.find_elements(By.TAG_NAME, "a")
+            print(f"  [DEBUG] Found {len(all_links)} total links on the page")
+            
+            for idx, link in enumerate(all_links, 1):
+                try:
+                    href = link.get_attribute("href")
+                    link_text = link.text.strip()
+                    
+                    if href and href.lower().endswith(".pdf"):
+                        # Filter: Only include PDFs with IR, IAR, or "Integrated Annual Report" keywords
+                        combined_text = f"{link_text} {href}".lower()
+                        
+                        # Exclude ESG and CG reports first
+                        is_excluded = (
+                            "esg" in combined_text or
+                            "cg report" in combined_text or
+                            "corporate governance" in combined_text or
+                            "sustainability report" in combined_text or
+                            "sr2" in combined_text
+                        )
+                        
+                        if is_excluded:
+                            print(f"    [{idx}] ⊗ Skipped (ESG/CG/SR): {link_text}")
+                            continue
+                        
+                        is_iar = (
+                            " iar" in combined_text or 
+                            "-iar" in combined_text or
+                            "iar2" in combined_text or
+                            "iar " in combined_text or
+                            combined_text.startswith("iar") or
+                            " ir2" in combined_text or
+                            "-ir2" in combined_text or
+                            "ir 2" in combined_text or
+                            "integrated annual report" in combined_text or
+                            "intergrated annual report" in combined_text or
+                            "integrated report" in combined_text or
+                            "annual report" in combined_text or
+                            (combined_text.startswith("ir") and any(char.isdigit() for char in combined_text[:6]))
+                        )
+                        
+                        if is_iar:
+                            pdf_urls.append(href)
+                            print(f"    [{idx}] ✓ IAR PDF: {link_text}")
+                            print(f"        URL: {href}")
+                        else:
+                            print(f"    [{idx}] ⊗ Skipped (not IAR): {link_text}")
+                except:
+                    continue
+        
+        # Strategy 3: Check page source for PDF URLs
+        if not pdf_urls:
+            print(f"  [STEP 4.4] No IAR PDF links found in <a> tags, checking page source...")
+            page_source = driver.page_source
+            
+            # Find PDF URLs in the page source using regex
+            pdf_patterns = [
+                r'href=["\']([^"\']*\.pdf[^"\']*)["\']',
+                r'(https?://[^\s<>"\']+\.pdf)',
+                r'src=["\']([^"\']*\.pdf[^"\']*)["\']',
+            ]
+            
+            for pattern in pdf_patterns:
+                found_pdfs = re.findall(pattern, page_source, re.IGNORECASE)
+                if found_pdfs:
+                    print(f"  ✓ Found {len(found_pdfs)} PDFs with pattern: {pattern[:50]}...")
+                    for pdf_url in found_pdfs:
+                        # Make relative URLs absolute
+                        if pdf_url.startswith("/"):
+                            pdf_url = f"https://www.klsescreener.com{pdf_url}"
+                        
+                        # Filter: Only include PDFs with IR, IAR, or "Integrated Annual Report" keywords
+                        url_lower = pdf_url.lower()
+                        
+                        # Exclude ESG and CG reports first
+                        is_excluded = (
+                            "esg" in url_lower or
+                            "cg report" in url_lower or
+                            "corporate governance" in url_lower or
+                            "sustainability report" in url_lower or
+                            "sr2" in url_lower
+                        )
+                        
+                        if is_excluded:
+                            print(f"    ⊗ Skipped (ESG/CG/SR): {pdf_url}")
+                            continue
+                        
+                        is_iar = (
+                            " iar" in url_lower or 
+                            "-iar" in url_lower or
+                            "iar2" in url_lower or
+                            "iar " in url_lower or
+                            url_lower.split("/")[-1].startswith("iar") or
+                            " ir2" in url_lower or
+                            "-ir2" in url_lower or
+                            "ir 2" in url_lower or
+                            "integrated annual report" in url_lower or
+                            "intergrated annual report" in url_lower or
+                            "integrated report" in url_lower or
+                            "annual report" in url_lower or
+                            (url_lower.split("/")[-1].startswith("ir") and any(char.isdigit() for char in url_lower.split("/")[-1][:6]))
+                        )
+                        
+                        if is_iar:
+                            pdf_urls.append(pdf_url)
+                            print(f"    ✓ Found IAR PDF in source: {pdf_url}")
+                        else:
+                            print(f"    ⊗ Skipped (not IAR): {pdf_url}")
+        
+        # If still no PDFs found, show debug info
+        if not pdf_urls:
+            print(f"  [DEBUG] No IAR PDF links found - showing page info for debugging:")
+            print(f"  [DEBUG] Page title: {driver.title}")
+            
+            # Show all PDF filenames found (even non-IAR ones) for debugging
+            print(f"  [DEBUG] All PDFs found on page (including non-IAR):")
+            all_links = driver.find_elements(By.TAG_NAME, "a")
+            all_pdf_count = 0
+            for link in all_links:
+                try:
+                    href = link.get_attribute("href")
+                    text = link.text.strip()
+                    if href and href.lower().endswith(".pdf"):
+                        all_pdf_count += 1
+                        print(f"    - {text} | {href}")
+                except:
+                    continue
+            
+            if all_pdf_count == 0:
+                print(f"  [DEBUG] No PDF links at all found on page")
+                print(f"  [DEBUG] Page source snippet (first 2000 chars):")
+                print(driver.page_source[:2000])
+            
+            # Try to find any attachments section
+            print(f"  [DEBUG] Looking for 'attachment' or 'file' text in page...")
+            if "attachment" in driver.page_source.lower():
+                print(f"  ✓ Found 'attachment' keyword in page")
+                # Extract context around 'attachment'
+                idx = driver.page_source.lower().find("attachment")
+                context = driver.page_source[max(0, idx-200):min(len(driver.page_source), idx+500)]
+                print(f"  [DEBUG] Context around 'attachment':\n{context}")
+        
+        # Remove duplicates
+        pdf_urls = list(set(pdf_urls))
+        
+        print(f"[ANNUAL_REPORTS] ✓ Extraction complete: Found {len(pdf_urls)} IAR PDF files")
+        
+        agent_logger.log_agent_end(
+            input_data={"company_code": company_code},
+            output_data={"pdf_count": len(pdf_urls), "pdf_urls": pdf_urls}
+        )
+        
+        return pdf_urls
+        
+    except Exception as e:
+        error_msg = f"Error extracting annual report PDFs: {str(e)}"
+        print(f"  ⚠ {error_msg}")
+        agent_logger.error(error_msg)
+        return []
+    finally:
+        if driver:
+            driver.quit()
+
+
+def _extract_company_name_from_query(query: str) -> str:
+    """
+    Extract company name/ticker from natural language query using LLM.
+    
+    Args:
+        query: Natural language query (e.g., "can I buy AMBANK now")
+        
+    Returns:
+        Extracted company name/ticker (e.g., "AMBANK")
+    """
+    prompt = f"""Extract the company name or stock ticker from the following query. 
+Return ONLY the company name or ticker, nothing else.
+
+Query: {query}
+
+Company name/ticker:"""
+    
+    try:
+        result = _call_ollama(prompt)
+        # Clean up the response - remove quotes, whitespace, etc.
+        company_name = result.strip().strip('"').strip("'").strip()
+        return company_name
+    except Exception as e:
+        # Fallback: try to extract using regex patterns
+        print(f"  ⚠ LLM extraction failed: {str(e)}, trying regex fallback...")
+        # Look for common patterns like "buy AMBANK", "AMBANK stock", etc.
+        patterns = [
+            r"(?:buy|sell|purchase|invest in|trade)\s+([A-Z]{2,})",
+            r"([A-Z]{2,})\s+(?:stock|shares|now|today)",
+            r"([A-Z]{2,})\s*$",
+        ]
+        for pattern in patterns:
+            match = re.search(pattern, query, re.IGNORECASE)
+            if match:
+                return match.group(1).upper()
+        # Last resort: return first uppercase word
+        words = query.split()
+        for word in words:
+            if word.isupper() and len(word) >= 2:
+                return word
+        raise ValueError(f"Could not extract company name from query: {query}")
+
+
+@log_agent_execution("get_companies_by_sector_agent")
+def get_companies_by_sector_name(sector: str) -> List[Company]:
+    """
+    Get all companies in a sector by searching KLSE Screener's sector/subsector dropdowns.
+    
+    This function takes a sector name (e.g., from a Company object), finds it in the
+    sector or subsector dropdown on KLSE Screener, clicks Screen, and returns all companies.
+    
+    Args:
+        sector: Sector name (e.g., "Diversified Industrials", "Financial Services", "Technology")
+        
+    Returns:
+        List of Company objects in the sector
+        
+    Example:
+        # Get all companies in the same sector as a company
+        companies = get_companies_by_sector_name(my_company.sector)
+    """
+    agent_logger = AgentLogger("get_companies_by_sector_agent")
+    agent_logger.log_agent_start({"sector": sector})
+    
+    print(f"[SECTOR_COMPANIES] Starting sector company extraction for sector: '{sector}'")
+    
+    try:
+        from selenium import webdriver
+        from selenium.webdriver.common.by import By
+        from selenium.webdriver.support.ui import WebDriverWait
+        from selenium.webdriver.support import expected_conditions as EC
+        from selenium.webdriver.support.ui import Select
+        from selenium.webdriver.chrome.options import Options
+        from selenium.webdriver.chrome.service import Service
+    except ImportError:
+        print(f"  ⚠ Selenium not available")
+        agent_logger.log_agent_error("Selenium not available")
+        return []
+    
+    base_url = "https://www.klsescreener.com/v2/"
+    driver = None
+    companies = []
+    
+    try:
+        # Configure Chrome options
+        chrome_options = Options()
+        chrome_options.add_argument("--headless")
+        chrome_options.add_argument("--no-sandbox")
+        chrome_options.add_argument("--disable-dev-shm-usage")
+        chrome_options.add_argument("--window-size=1920,1080")
+        chrome_options.add_argument("user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
+        
+        # Initialize driver
+        try:
+            service = Service()
+            driver = webdriver.Chrome(service=service, options=chrome_options)
+        except:
+            driver = webdriver.Chrome(options=chrome_options)
+        
+        print(f"  [STEP 1] Navigating to {base_url}...")
+        driver.get(base_url)
+        time.sleep(2)
+        
+        # Step 2: Try to find and select sector in dropdown
+        print(f"  [STEP 2] Trying to filter by sector '{sector}'...")
+        sector_found = False
+        
+        try:
+            # Find sector dropdown
+            sector_select = None
+            sector_selectors = [
+                (By.NAME, "sector"),
+                (By.ID, "sector"),
+                (By.XPATH, "//select[@name='sector']"),
+            ]
+            
+            for selector_type, selector_value in sector_selectors:
+                try:
+                    sector_select = WebDriverWait(driver, 5).until(
+                        EC.presence_of_element_located((selector_type, selector_value))
+                    )
+                    print(f"  ✓ Found sector dropdown using: {selector_type} = '{selector_value}'")
+                    break
+                except:
+                    continue
+            
+            if sector_select:
+                select = Select(sector_select)
+                options = select.options
+                
+                # Try to find matching sector
+                for option in options:
+                    option_text = option.text.strip()
+                    # Skip empty options and ensure both sector and option_text are not empty
+                    if option_text and sector and (sector.lower() in option_text.lower() or option_text.lower() in sector.lower()):
+                        print(f"  ✓ Found matching sector option: '{option_text}'")
+                        select.select_by_visible_text(option_text)
+                        sector_found = True
+                        time.sleep(1)
+                        break
+                
+                if not sector_found:
+                    print(f"  ⚠ Sector '{sector}' not found in sector dropdown, trying subsector...")
+            
+        except Exception as e:
+            print(f"  ⚠ Error selecting sector: {str(e)}")
+        
+        # Step 3: If sector not found, try subsector
+        if not sector_found:
+            print(f"  [STEP 3] Trying to filter by subsector '{sector}'...")
+            try:
+                # Find subsector dropdown
+                subsector_select = None
+                subsector_selectors = [
+                    (By.NAME, "subsector"),
+                    (By.ID, "subsector"),
+                    (By.XPATH, "//select[@name='subsector']"),
+                ]
+                
+                for selector_type, selector_value in subsector_selectors:
+                    try:
+                        subsector_select = WebDriverWait(driver, 5).until(
+                            EC.presence_of_element_located((selector_type, selector_value))
+                        )
+                        print(f"  ✓ Found subsector dropdown using: {selector_type} = '{selector_value}'")
+                        break
+                    except:
+                        continue
+                
+                if subsector_select:
+                    select = Select(subsector_select)
+                    options = select.options
+                    
+                    # Try to find matching subsector
+                    for option in options:
+                        option_text = option.text.strip()
+                        # Skip empty options and ensure both sector and option_text are not empty
+                        if option_text and sector and (sector.lower() in option_text.lower() or option_text.lower() in sector.lower()):
+                            print(f"  ✓ Found matching subsector option: '{option_text}'")
+                            select.select_by_visible_text(option_text)
+                            sector_found = True
+                            time.sleep(1)
+                            break
+                    
+                    if not sector_found:
+                        print(f"  ⚠ Subsector '{sector}' not found in subsector dropdown")
+            except Exception as e:
+                print(f"  ⚠ Error selecting subsector: {str(e)}")
+        
+        # Step 4: Click Screen button to apply filter
+        if sector_found:
+            print(f"  [STEP 4] Clicking Screen button...")
+            try:
+                screen_button = driver.find_element(By.XPATH, "//input[@type='submit' and contains(@value, 'Screen')]")
+                screen_button.click()
+                print(f"  ✓ Clicked Screen button")
+                time.sleep(5)  # Wait longer for results to load and filter to apply
+                
+                # Verify the page has loaded filtered results
+                # Check that we're not on the main page with all companies
+                current_url = driver.current_url
+                print(f"  [STEP 4.1] Current URL after filtering: {current_url}")
+                
+                # Step 5: Extract all companies from the results table
+                print(f"  [STEP 5] Extracting companies from results table...")
+                companies = _extract_companies_from_table(driver, sector)
+                print(f"  ✓ Extracted {len(companies)} companies from sector '{sector}'")
+                
+                # Additional validation: Check if companies are actually from the sector
+                if companies:
+                    print(f"  [STEP 5.1] Validating filtered results...")
+                    print(f"  [STEP 5.1] First company: {companies[0].name} ({companies[0].code}) - Sector: {companies[0].sector}")
+                    if len(companies) > 100:
+                        print(f"  [STEP 5.1] ⚠ Warning: {len(companies)} companies found - this might be too many, filter may not have applied correctly")
+                
+            except Exception as e:
+                print(f"  ⚠ Error clicking Screen button or extracting companies: {str(e)}")
+        else:
+            print(f"  ⚠ Could not find sector '{sector}' in sector or subsector dropdowns")
+        
+        # Step 6: Fetch average volume for all companies
+        if companies:
+            print(f"  [STEP 6] Fetching average volume for {len(companies)} companies...")
+            companies = fetch_average_volume_for_companies(companies)
+            print(f"  ✓ Volume fetching complete")
+        
+        # Step 7: Fetch annual reports for all companies
+        if companies:
+            print(f"  [STEP 7] Fetching annual reports for {len(companies)} companies...")
+            companies = fetch_annual_reports_for_companies(companies)
+            print(f"  ✓ Annual report fetching complete")
+        
+        agent_logger.log_agent_end(
+            input_data={"sector": sector},
+            output_data={"company_count": len(companies)}
+        )
+        
+        return companies
+        
+    except Exception as e:
+        error_msg = f"Error fetching companies by sector: {str(e)}"
+        print(f"  ⚠ {error_msg}")
+        agent_logger.error(error_msg)
+        return []
+    finally:
+        if driver:
+            driver.quit()
+
+
+def _search_company_by_sector(company_name: str, sector: str) -> Optional[Dict]:
+    """
+    Search for company by filtering by sector or subsector.
+    
+    First tries to find company in the sector dropdown, then tries subsector.
+    
+    Args:
+        company_name: Company name to search for
+        sector: Sector name (e.g., "Diversified Industrials")
+        
+    Returns:
+        Dictionary with company data or None if not found
+    """
+    try:
+        from selenium import webdriver
+        from selenium.webdriver.common.by import By
+        from selenium.webdriver.support.ui import WebDriverWait
+        from selenium.webdriver.support import expected_conditions as EC
+        from selenium.webdriver.support.ui import Select
+        from selenium.webdriver.chrome.options import Options
+        from selenium.webdriver.chrome.service import Service
+    except ImportError:
+        print(f"  ⚠ Selenium not available for sector-based search")
+        return None
+    
+    base_url = "https://www.klsescreener.com/v2/"
+    driver = None
+    
+    try:
+        # Configure Chrome options
+        chrome_options = Options()
+        chrome_options.add_argument("--headless")
+        chrome_options.add_argument("--no-sandbox")
+        chrome_options.add_argument("--disable-dev-shm-usage")
+        chrome_options.add_argument("--window-size=1920,1080")
+        chrome_options.add_argument("user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
+        
+        # Initialize driver
+        try:
+            service = Service()
+            driver = webdriver.Chrome(service=service, options=chrome_options)
+        except:
+            driver = webdriver.Chrome(options=chrome_options)
+        
+        print(f"  [SECTOR_SEARCH] Navigating to {base_url}...")
+        driver.get(base_url)
+        time.sleep(2)
+        
+        # Step 1: Try to find company in sector dropdown
+        print(f"  [SECTOR_SEARCH] Step 1: Trying to filter by sector '{sector}'...")
+        sector_found = False
+        
+        try:
+            # Find sector dropdown
+            sector_select = None
+            sector_selectors = [
+                (By.NAME, "sector"),
+                (By.ID, "sector"),
+                (By.XPATH, "//select[@name='sector']"),
+            ]
+            
+            for selector_type, selector_value in sector_selectors:
+                try:
+                    sector_select = WebDriverWait(driver, 5).until(
+                        EC.presence_of_element_located((selector_type, selector_value))
+                    )
+                    print(f"  ✓ Found sector dropdown using: {selector_type} = '{selector_value}'")
+                    break
+                except:
+                    continue
+            
+            if sector_select:
+                select = Select(sector_select)
+                options = select.options
+                
+                # Try to find matching sector
+                for option in options:
+                    option_text = option.text.strip()
+                    if sector.lower() in option_text.lower() or option_text.lower() in sector.lower():
+                        print(f"  ✓ Found matching sector option: '{option_text}'")
+                        select.select_by_visible_text(option_text)
+                        sector_found = True
+                        time.sleep(1)
+                        break
+                
+                if not sector_found:
+                    print(f"  ⚠ Sector '{sector}' not found in sector dropdown")
+            
+        except Exception as e:
+            print(f"  ⚠ Error selecting sector: {str(e)}")
+        
+        # Step 2: If sector not found or company not in sector results, try subsector
+        if not sector_found:
+            print(f"  [SECTOR_SEARCH] Step 2: Trying to filter by subsector '{sector}'...")
+            try:
+                # Find subsector dropdown
+                subsector_select = None
+                subsector_selectors = [
+                    (By.NAME, "subsector"),
+                    (By.ID, "subsector"),
+                    (By.XPATH, "//select[@name='subsector']"),
+                ]
+                
+                for selector_type, selector_value in subsector_selectors:
+                    try:
+                        subsector_select = WebDriverWait(driver, 5).until(
+                            EC.presence_of_element_located((selector_type, selector_value))
+                        )
+                        print(f"  ✓ Found subsector dropdown using: {selector_type} = '{selector_value}'")
+                        break
+                    except:
+                        continue
+                
+                if subsector_select:
+                    select = Select(subsector_select)
+                    options = select.options
+                    
+                    # Try to find matching subsector
+                    for option in options:
+                        option_text = option.text.strip()
+                        if sector.lower() in option_text.lower() or option_text.lower() in sector.lower():
+                            print(f"  ✓ Found matching subsector option: '{option_text}'")
+                            select.select_by_visible_text(option_text)
+                            sector_found = True
+                            time.sleep(1)
+                            break
+                    
+                    if not sector_found:
+                        print(f"  ⚠ Subsector '{sector}' not found in subsector dropdown")
+            except Exception as e:
+                print(f"  ⚠ Error selecting subsector: {str(e)}")
+        
+        # Step 3: Click Screen button to apply filter
+        if sector_found:
+            print(f"  [SECTOR_SEARCH] Step 3: Clicking Screen button...")
+            try:
+                screen_button = driver.find_element(By.XPATH, "//input[@type='submit' and contains(@value, 'Screen')]")
+                screen_button.click()
+                print(f"  ✓ Clicked Screen button")
+                time.sleep(3)  # Wait for results to load
+                
+                # Step 4: Search for company in the filtered results
+                print(f"  [SECTOR_SEARCH] Step 4: Searching for '{company_name}' in filtered results...")
+                tables = driver.find_elements(By.TAG_NAME, "table")
+                
+                for table in tables:
+                    try:
+                        rows = table.find_elements(By.TAG_NAME, "tr")
+                        for row in rows[1:]:  # Skip header
+                            cells = row.find_elements(By.TAG_NAME, "td")
+                            if len(cells) >= 2:
+                                first_cell_text = cells[0].text.strip()
+                                second_cell_text = cells[1].text.strip()
+                                
+                                # Check if this row matches the company
+                                if (company_name.upper() in first_cell_text.upper() or 
+                                    company_name.upper() in second_cell_text.upper()):
+                                    print(f"  ✓ Found company in filtered results")
+                                    # Click on the company link
+                                    try:
+                                        link = cells[0].find_element(By.TAG_NAME, "a")
+                                        link.click()
+                                        time.sleep(3)
+                                        
+                                        # Extract company data from detail page
+                                        company_data = _extract_company_from_detail_page(driver, company_name)
+                                        return company_data
+                                    except:
+                                        pass
+                    except:
+                        continue
+                
+                print(f"  ⚠ Company '{company_name}' not found in filtered results")
+            except Exception as e:
+                print(f"  ⚠ Error clicking Screen button or searching: {str(e)}")
+        
+        return None
+        
+    except Exception as e:
+        print(f"  ⚠ Error in sector-based search: {str(e)}")
+        return None
+    finally:
+        if driver:
+            driver.quit()
+
+
+def _search_company_on_klse(company_name: str) -> Optional[Dict]:
+    """
+    Search for company on KLSE Screener and get company data using Selenium.
+    
+    Args:
+        company_name: Company name or ticker to search for
+        
+    Returns:
+        Dictionary with company data or None if not found
+    """
+    try:
+        from selenium import webdriver
+        from selenium.webdriver.common.by import By
+        from selenium.webdriver.support.ui import WebDriverWait
+        from selenium.webdriver.support import expected_conditions as EC
+        from selenium.webdriver.chrome.options import Options
+        from selenium.webdriver.chrome.service import Service
+        from selenium.webdriver.common.keys import Keys
+    except ImportError:
+        print(f"  ⚠ Selenium not available, falling back to basic search...")
+        return _search_company_basic(company_name)
+    
+    base_url = "https://www.klsescreener.com/v2/"
+    driver = None
+    
+    try:
+        # Configure Chrome options
+        chrome_options = Options()
+        chrome_options.add_argument("--headless")
+        chrome_options.add_argument("--no-sandbox")
+        chrome_options.add_argument("--disable-dev-shm-usage")
+        chrome_options.add_argument("--window-size=1920,1080")
+        chrome_options.add_argument("user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
+        
+        # Initialize driver
+        try:
+            service = Service()
+            driver = webdriver.Chrome(service=service, options=chrome_options)
+        except:
+            driver = webdriver.Chrome(options=chrome_options)
+        
+        print(f"  [SEARCH] Navigating to {base_url}...")
+        driver.get(base_url)
+        time.sleep(2)  # Wait for page to load
+        
+        # Find search input field
+        print(f"  [SEARCH] Looking for search input field...")
+        search_input = None
+        search_selectors = [
+            (By.NAME, "search"),
+            (By.ID, "search"),
+            (By.XPATH, "//input[@type='text' and contains(@placeholder, 'search')]"),
+            (By.XPATH, "//input[@type='search']"),
+        ]
+        
+        for selector_type, selector_value in search_selectors:
+            try:
+                search_input = WebDriverWait(driver, 5).until(
+                    EC.presence_of_element_located((selector_type, selector_value))
+                )
+                print(f"  ✓ Found search input using: {selector_type} = '{selector_value}'")
+                break
+            except:
+                continue
+        
+        if not search_input:
+            print(f"  ⚠ Search input not found")
+            return None
+        
+        # Enter company name and wait for dropdown
+        print(f"  [SEARCH] Entering '{company_name}' in search field...")
+        search_input.clear()
+        search_input.send_keys(company_name)
+        print(f"  [SEARCH] Waiting for dropdown to appear...")
+        time.sleep(2)  # Wait for dropdown to appear
+        
+        # Find and click the first option in the dropdown
+        print(f"  [SEARCH] Looking for dropdown options...")
+        first_dropdown_option = None
+        
+        try:
+            # Look for dropdown/autocomplete options
+            # Common patterns: ul with class containing "dropdown", "autocomplete", "suggestions", etc.
+            dropdown_selectors = [
+                (By.XPATH, "//ul[contains(@class, 'dropdown')]//li[1]//a"),
+                (By.XPATH, "//ul[contains(@class, 'autocomplete')]//li[1]//a"),
+                (By.XPATH, "//ul[contains(@class, 'suggestions')]//li[1]//a"),
+                (By.XPATH, "//div[contains(@class, 'dropdown')]//a[1]"),
+                (By.XPATH, "//div[contains(@class, 'autocomplete')]//a[1]"),
+                (By.XPATH, "//ul[@role='listbox']//li[1]//a"),
+                (By.XPATH, "//div[@role='listbox']//a[1]"),
+            ]
+            
+            for selector_type, selector_value in dropdown_selectors:
+                try:
+                    first_dropdown_option = WebDriverWait(driver, 3).until(
+                        EC.element_to_be_clickable((selector_type, selector_value))
+                    )
+                    print(f"  ✓ Found dropdown option using: {selector_type} = '{selector_value}'")
+                    break
+                except:
+                    continue
+            
+            # Alternative: Look for any clickable element that appears after typing
+            if not first_dropdown_option:
+                print(f"  [SEARCH] Trying alternative: looking for clickable elements...")
+                # Look for links or clickable divs that might be dropdown items
+                try:
+                    # Try to find elements that appeared after typing
+                    dropdown_elements = driver.find_elements(By.XPATH, "//a[contains(text(), '- KLSE Screener')]")
+                    if dropdown_elements:
+                        first_dropdown_option = dropdown_elements[0]
+                        print(f"  ✓ Found dropdown option via text search")
+                except:
+                    pass
+            
+            # Another alternative: Look for any list item or div that's clickable
+            if not first_dropdown_option:
+                try:
+                    # Find any visible dropdown container
+                    dropdown_containers = driver.find_elements(By.XPATH, 
+                        "//ul[contains(@class, 'dropdown') or contains(@class, 'autocomplete') or contains(@class, 'menu')] | "
+                        "//div[contains(@class, 'dropdown') or contains(@class, 'autocomplete')]")
+                    
+                    for container in dropdown_containers:
+                        try:
+                            # Get first clickable child (link or list item)
+                            first_item = container.find_element(By.XPATH, ".//a[1] | .//li[1]//a | .//div[1]")
+                            if first_item.is_displayed():
+                                first_dropdown_option = first_item
+                                print(f"  ✓ Found dropdown option in container")
+                                break
+                        except:
+                            continue
+                except:
+                    pass
+                    
+        except Exception as e:
+            print(f"  ⚠ Error finding dropdown: {str(e)}")
+        
+        if not first_dropdown_option:
+            print(f"  ⚠ Dropdown option not found, trying Enter key as fallback...")
+            # Fallback: Press Enter
+            search_input.send_keys(Keys.RETURN)
+            time.sleep(3)
+        else:
+            # Click the first dropdown option
+            print(f"  [SEARCH] Clicking first dropdown option...")
+            try:
+                # Scroll into view if needed
+                driver.execute_script("arguments[0].scrollIntoView(true);", first_dropdown_option)
+                time.sleep(0.5)
+                first_dropdown_option.click()
+                print(f"  ✓ Clicked first dropdown option")
+                time.sleep(3)  # Wait for detail page to load
+            except Exception as e:
+                print(f"  ⚠ Error clicking dropdown option: {str(e)}")
+                # Try JavaScript click
+                try:
+                    driver.execute_script("arguments[0].click();", first_dropdown_option)
+                    time.sleep(3)
+                except:
+                    # Final fallback: Press Enter
+                    search_input.send_keys(Keys.RETURN)
+                    time.sleep(3)
+        
+        # Now extract company data from the detail page
+        print(f"  [SEARCH] Extracting company data from detail page...")
+        current_url = driver.current_url
+        print(f"  [SEARCH] Current URL: {current_url}")
+        
+        # Extract company data from the detail page
+        company_data = _extract_company_from_detail_page(driver, company_name)
+        
+        return company_data
+        
+    except Exception as e:
+        print(f"  ⚠ Error searching for company with Selenium: {str(e)}")
+        return None
+    finally:
+        if driver:
+            driver.quit()
+
+
+def _search_company_basic(company_name: str) -> Optional[Dict]:
+    """Fallback basic search without Selenium."""
+    base_url = "https://www.klsescreener.com/v2/"
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+    }
+    
+    try:
+        # Try direct search URL
+        search_url = f"{base_url}?search={company_name}"
+        response = requests.get(search_url, headers=headers, timeout=10)
+        if response.status_code == 200:
+            soup = BeautifulSoup(response.content, 'lxml')
+            tables = soup.find_all("table")
+            for table in tables:
+                rows = table.find_all("tr")
+                for row in rows[1:]:
+                    cells = row.find_all(["td", "th"])
+                    if len(cells) >= 2:
+                        first_cell = cells[0].get_text(strip=True)
+                        second_cell = cells[1].get_text(strip=True)
+                        if (company_name.upper() in first_cell.upper() or 
+                            company_name.upper() in second_cell.upper()):
+                            return _extract_company_from_table_row(row, company_name)
+        return None
+    except:
+        return None
+
+
+def _extract_company_from_detail_page(driver, company_name: str) -> Dict:
+    """
+    Extract company data from the detail page after clicking the link.
+    
+    Args:
+        driver: Selenium WebDriver instance (already on detail page)
+        company_name: Company name for reference
+        
+    Returns:
+        Dictionary with company data
+    """
+    from selenium.webdriver.common.by import By
+    
+    company_data = {
+        "name": company_name,
+        "code": "",
+        "detail_url": driver.current_url,
+        "eps": None,
+        "pe_ratio": None,
+        "dividend_yield": None,
+        "roe": None,
+        "market_cap": None,
+        "sector": "unknown"
+    }
+    
+    try:
+        # Extract code from URL first (most reliable)
+        # URL format: https://www.klsescreener.com/v2/stocks/view/5398/gamuda-berhad
+        current_url = driver.current_url
+        url_code_match = re.search(r'/stocks/view/(\d{4})/', current_url)
+        if url_code_match:
+            company_data["code"] = url_code_match.group(1)
+            print(f"  ✓ Extracted code from URL: {company_data['code']}")
+        
+        # Extract financial data from tables
+        tables = driver.find_elements(By.TAG_NAME, "table")
+        for table in tables:
+            try:
+                rows = table.find_elements(By.TAG_NAME, "tr")
+                for row in rows:
+                    cells = row.find_elements(By.TAG_NAME, "td")
+                    if len(cells) >= 2:
+                        label = cells[0].text.strip().lower()
+                        value = cells[1].text.strip()
+                        
+                        # Extract various metrics
+                        if "eps" in label and not company_data["eps"]:
+                            company_data["eps"] = _parse_float(value)
+                        elif ("pe" in label or "p/e" in label) and "ratio" not in label.lower():
+                            if not company_data["pe_ratio"]:
+                                company_data["pe_ratio"] = _parse_float(value)
+                        elif label == "dy" or "dy" in label or ("dividend" in label and "yield" in label):
+                            if not company_data["dividend_yield"]:
+                                company_data["dividend_yield"] = _parse_float(value)
+                                print(f"  ✓ Extracted dividend_yield from table: {company_data['dividend_yield']}")
+                        elif "roe" in label:
+                            if not company_data["roe"]:
+                                company_data["roe"] = _parse_float(value)
+                        elif "market cap" in label or label == "market cap" or "mkt cap" in label:
+                            if not company_data["market_cap"]:
+                                # Parse and convert to millions (M)
+                                parsed_value = _parse_float(value)
+                                if parsed_value:
+                                    # Convert to millions (M)
+                                    company_data["market_cap"] = parsed_value / 1000000
+                                    print(f"  ✓ Extracted market_cap from table: {company_data['market_cap']} (in millions)")
+            except:
+                continue
+        
+        # Extract sector from page (format: "Main Market : Diversified Industrials")
+        try:
+            page_text = driver.find_element(By.TAG_NAME, "body").text
+            # Look for pattern like "Main Market : Diversified Industrials" or "Ace Market : Technology"
+            sector_match = re.search(r"(?:Main Market|Ace Market|Leap Market)\s*:\s*([^\n]+)", page_text, re.IGNORECASE)
+            if sector_match:
+                sector_text = sector_match.group(1).strip()
+                company_data["sector"] = sector_text
+                print(f"  ✓ Extracted sector: {sector_text}")
+        except:
+            pass
+        
+        # Also try to extract from page text using regex
+        try:
+            page_text = driver.find_element(By.TAG_NAME, "body").text
+            
+            # Extract price
+            if not company_data["price"]:
+                price_match = re.search(r"Price[:\s]+([\d,]+\.?\d*)", page_text, re.IGNORECASE)
+                if price_match:
+                    company_data["price"] = _parse_float(price_match.group(1))
+            
+            # Extract PE ratio
+            if not company_data["pe_ratio"]:
+                pe_match = re.search(r"P/E[:\s]+([\d,]+\.?\d*)", page_text, re.IGNORECASE)
+                if pe_match:
+                    company_data["pe_ratio"] = _parse_float(pe_match.group(1))
+            
+            # Extract DY (Dividend Yield)
+            if not company_data["dividend_yield"]:
+                # Try exact "DY" match first
+                dy_match = re.search(r"\bDY\b[:\s]+([\d,]+\.?\d*)", page_text, re.IGNORECASE)
+                if dy_match:
+                    company_data["dividend_yield"] = _parse_float(dy_match.group(1))
+                    print(f"  ✓ Extracted dividend_yield from page text (DY): {company_data['dividend_yield']}")
+                else:
+                    # Try "Dividend Yield" pattern
+                    dy_match = re.search(r"Dividend\s+Yield[:\s]+([\d,]+\.?\d*)", page_text, re.IGNORECASE)
+                    if dy_match:
+                        company_data["dividend_yield"] = _parse_float(dy_match.group(1))
+                        print(f"  ✓ Extracted dividend_yield from page text (Dividend Yield): {company_data['dividend_yield']}")
+            
+            # Extract Market Cap
+            if not company_data["market_cap"]:
+                # Try various Market Cap patterns
+                market_cap_patterns = [
+                    r"Market\s+Cap[:\s]+([\d,]+\.?\d*\s*[BMK]?)",  # With B/M/K suffix
+                    r"Market\s+Cap[:\s]+([\d,]+\.?\d*)",
+                    r"\bMarket\s+Capitalisation[:\s]+([\d,]+\.?\d*)",
+                ]
+                for pattern in market_cap_patterns:
+                    market_cap_match = re.search(pattern, page_text, re.IGNORECASE)
+                    if market_cap_match:
+                        market_cap_str = market_cap_match.group(1)
+                        # Handle B (billions), M (millions), K (thousands) suffixes
+                        # Convert everything to millions (M)
+                        multiplier = 1
+                        if 'B' in market_cap_str.upper():
+                            multiplier = 1000  # B to M: multiply by 1000
+                            market_cap_str = market_cap_str.upper().replace('B', '').strip()
+                        elif 'M' in market_cap_str.upper():
+                            multiplier = 1  # Already in M
+                            market_cap_str = market_cap_str.upper().replace('M', '').strip()
+                        elif 'K' in market_cap_str.upper():
+                            multiplier = 0.001  # K to M: divide by 1000
+                            market_cap_str = market_cap_str.upper().replace('K', '').strip()
+                        
+                        parsed_value = _parse_float(market_cap_str)
+                        if parsed_value:
+                            company_data["market_cap"] = parsed_value * multiplier
+                            print(f"  ✓ Extracted market_cap from page text: {company_data['market_cap']} (in millions)")
+                        break
+            
+            # Extract ROE
+            if not company_data["roe"]:
+                roe_match = re.search(r"ROE[:\s]+([\d,]+\.?\d*)", page_text, re.IGNORECASE)
+                if roe_match:
+                    company_data["roe"] = _parse_float(roe_match.group(1))
+        except:
+            pass
+        
+        print(f"  ✓ Extracted company data: {company_data.get('name')} ({company_data.get('code')})")
+        return company_data
+        
+    except Exception as e:
+        print(f"  ⚠ Error extracting company data from detail page: {str(e)}")
+        return company_data
+
+
+def _extract_company_from_selenium_row(row, company_name: str) -> Dict:
+    """Extract company data from Selenium table row."""
+    from selenium.webdriver.common.by import By
+    cells = row.find_elements(By.TAG_NAME, "td")
+    company_data = {
+        "name": company_name,
+        "code": "",
+        "detail_url": None,
+        "price": None,
+        "eps": None,
+        "pe_ratio": None,
+        "dividend_yield": None,
+        "roe": None,
+        "market_cap": None,
+        "sector": "unknown"
+    }
+    
+    try:
+        if len(cells) > 0:
+            name_cell = cells[0]
+            try:
+                name_link = name_cell.find_element(By.TAG_NAME, "a")
+                company_data["name"] = name_link.text.strip()
+                detail_url = name_link.get_attribute("href")
+                if detail_url and not detail_url.startswith("http"):
+                    base_url = "https://www.klsescreener.com"
+                    if detail_url.startswith("/"):
+                        detail_url = base_url + detail_url
+                    else:
+                        detail_url = base_url + "/" + detail_url
+                company_data["detail_url"] = detail_url
+            except:
+                company_data["name"] = name_cell.text.strip()
+        
+        if len(cells) > 1:
+            company_data["code"] = cells[1].text.strip()
+        
+        if len(cells) > 3:
+            company_data["price"] = _parse_float(cells[3].text.strip())
+        if len(cells) > 8:
+            company_data["eps"] = _parse_float(cells[8].text.strip())
+        if len(cells) > 11:
+            company_data["pe_ratio"] = _parse_float(cells[11].text.strip())
+        if len(cells) > 12:
+            company_data["dividend_yield"] = _parse_float(cells[12].text.strip())
+        if len(cells) > 13:
+            company_data["roe"] = _parse_float(cells[13].text.strip())
+        if len(cells) > 15:
+            company_data["market_cap"] = _parse_float(cells[15].text.strip())
+    except Exception as e:
+        print(f"  ⚠ Error extracting company data: {str(e)}")
+    
+    return company_data
+
+
+def _extract_company_from_table_row(row, company_name: str) -> Dict:
+    """
+    Extract company data from a table row.
+    
+    Args:
+        row: BeautifulSoup table row element
+        company_name: Company name for reference
+        
+    Returns:
+        Dictionary with company data
+    """
+    cells = row.find_all(["td", "th"])
+    company_data = {
+        "name": company_name,
+        "code": "",
+        "detail_url": None,
+        "price": None,
+        "eps": None,
+        "pe_ratio": None,
+        "dividend_yield": None,
+        "roe": None,
+        "market_cap": None,
+        "sector": "unknown"
+    }
+    
+    try:
+        # Extract name and link (usually first cell)
+        if len(cells) > 0:
+            name_cell = cells[0]
+            name_link = name_cell.find("a")
+            if name_link:
+                company_data["name"] = name_link.get_text(strip=True)
+                detail_url = name_link.get("href", "")
+                if detail_url and not detail_url.startswith("http"):
+                    base_url = "https://www.klsescreener.com"
+                    if detail_url.startswith("/"):
+                        detail_url = base_url + detail_url
+                    else:
+                        detail_url = base_url + "/" + detail_url
+                company_data["detail_url"] = detail_url
+        
+        # Extract code (usually second cell)
+        if len(cells) > 1:
+            company_data["code"] = cells[1].get_text(strip=True)
+        
+        # Extract price (usually 4th cell, index 3)
+        if len(cells) > 3:
+            company_data["price"] = _parse_float(cells[3].get_text(strip=True))
+        
+        # Extract other fields similar to existing parsing logic
+        if len(cells) > 8:
+            company_data["eps"] = _parse_float(cells[8].get_text(strip=True))
+        if len(cells) > 11:
+            company_data["pe_ratio"] = _parse_float(cells[11].get_text(strip=True))
+        if len(cells) > 12:
+            company_data["dividend_yield"] = _parse_float(cells[12].get_text(strip=True))
+        if len(cells) > 13:
+            company_data["roe"] = _parse_float(cells[13].get_text(strip=True))
+        if len(cells) > 15:
+            company_data["market_cap"] = _parse_float(cells[15].get_text(strip=True))
+            
+    except Exception as e:
+        print(f"  ⚠ Error extracting company data: {str(e)}")
+    
+    return company_data
+
+
+def _get_embeddings(text: str) -> Optional[List[float]]:
+    """
+    Get embeddings for text using Ollama.
+    
+    Args:
+        text: Text to embed
+        
+    Returns:
+        Embedding vector or None if failed
+    """
+    if not OLLAMA_AVAILABLE:
+        return None
+    
+    try:
+        # Use Ollama's embedding model (try to use same model as chat, fallback to available)
+        available_model = _get_available_model("llama3.2")
+        response = ollama.embeddings(model=available_model, prompt=text)
+        return response['embedding']
+    except Exception as e:
+        print(f"  ⚠ Error getting embeddings: {str(e)}")
+        return None
+
+
+def _vector_search(query_text: str, webpage_text: str, top_k: int = 5) -> List[str]:
+    """
+    Perform vector search on webpage content.
+    
+    Args:
+        query_text: Query text to search for
+        webpage_text: Full webpage text content
+        top_k: Number of top results to return
+        
+    Returns:
+        List of relevant text chunks from webpage
+    """
+    if not NUMPY_AVAILABLE or not OLLAMA_AVAILABLE:
+        # Fallback: simple keyword matching
+        query_words = query_text.lower().split()
+        sentences = webpage_text.split('.')
+        relevant_sentences = []
+        for sentence in sentences:
+            sentence_lower = sentence.lower()
+            score = sum(1 for word in query_words if word in sentence_lower)
+            if score > 0:
+                relevant_sentences.append((score, sentence.strip()))
+        relevant_sentences.sort(reverse=True, key=lambda x: x[0])
+        return [s[1] for s in relevant_sentences[:top_k]]
+    
+    try:
+        # Get query embedding
+        query_embedding = _get_embeddings(query_text)
+        if not query_embedding:
+            return []
+        
+        # Split webpage into chunks (sentences or paragraphs)
+        chunks = [chunk.strip() for chunk in re.split(r'[.\n]+', webpage_text) if len(chunk.strip()) > 20]
+        
+        # Get embeddings for chunks
+        chunk_embeddings = []
+        for chunk in chunks[:50]:  # Limit to first 50 chunks for performance
+            embedding = _get_embeddings(chunk)
+            if embedding:
+                chunk_embeddings.append((chunk, embedding))
+        
+        if not chunk_embeddings:
+            return []
+        
+        # Calculate cosine similarity
+        query_vec = np.array(query_embedding)
+        similarities = []
+        for chunk, embedding in chunk_embeddings:
+            chunk_vec = np.array(embedding)
+            similarity = np.dot(query_vec, chunk_vec) / (np.linalg.norm(query_vec) * np.linalg.norm(chunk_vec))
+            similarities.append((similarity, chunk))
+        
+        # Sort by similarity and return top_k
+        similarities.sort(reverse=True, key=lambda x: x[0])
+        return [chunk for _, chunk in similarities[:top_k]]
+        
+    except Exception as e:
+        print(f"  ⚠ Error in vector search: {str(e)}")
+        return []
+
+
+@log_agent_execution("company_query_agent")
+def analyze_company_query(query: str) -> CompanyQueryResponse:
+    """
+    Extract company information from a natural language query.
+    
+    This agent:
+    1. Extracts company name from the query using LLM
+    2. Searches for the company on KLSE Screener
+    3. Accesses the company detail page
+    4. Extracts all company data and fills Company schema
+    
+    Args:
+        query: Natural language query about a single company (e.g., "can I invest sunway now")
+        
+    Returns:
+        CompanyQueryResponse with company data
+        
+    Note:
+        Only handles single company queries. Sector queries are not supported.
+    """
+    agent_logger = AgentLogger("company_query_agent")
+    agent_logger.log_agent_start({"query": query})
+    
+    print(f"[COMPANY_QUERY] Starting company extraction for query: '{query}'")
+    
+    try:
+        # Step 1: Extract company name from query
+        print(f"[COMPANY_QUERY.1] Extracting company name from query...")
+        company_name = _extract_company_name_from_query(query)
+        print(f"[COMPANY_QUERY.1] ✓ Extracted company name: '{company_name}'")
+        
+        # Step 2: Search for company on KLSE Screener and get company data
+        print(f"[COMPANY_QUERY.2] Searching for '{company_name}' on KLSE Screener...")
+        company_data = _search_company_on_klse(company_name)
+        
+        if not company_data:
+            raise ValueError(f"Company '{company_name}' not found on KLSE Screener")
+        
+        print(f"[COMPANY_QUERY.2] ✓ Found company: {company_data.get('name', 'N/A')} ({company_data.get('code', 'N/A')})")
+        
+        # Step 2.1: If we have sector info, try to find company using sector/subsector filtering
+        sector = company_data.get("sector", "unknown")
+        if sector and sector != "unknown":
+            print(f"[COMPANY_QUERY.2.1] Company sector: '{sector}'. Trying sector/subsector-based search...")
+            sector_based_data = _search_company_by_sector(company_name, sector)
+            if sector_based_data:
+                # Use sector-based search result if it found the company
+                print(f"[COMPANY_QUERY.2.1] ✓ Found company via sector/subsector filtering")
+                company_data = sector_based_data
+            else:
+                print(f"[COMPANY_QUERY.2.1] ⚠ Company not found via sector/subsector filtering, using original search result")
+        
+        # Step 3: Extract average volume if detail_url is available
+        sector = company_data.get("sector", "unknown")
+        average_volume = company_data.get("average_volume")
+        if company_data.get("detail_url") and not average_volume:
+            print(f"[COMPANY_QUERY.3] Extracting average volume from detail page...")
+            try:
+                headers = {
+                    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+                }
+                response = requests.get(company_data.get("detail_url"), headers=headers, timeout=10)
+                if response.status_code == 200:
+                    soup = BeautifulSoup(response.content, 'lxml')
+                    page_text = soup.get_text()
+                    
+                    # Extract Average Volume (3M)
+                    volume_patterns = [
+                        r"Average\s+Volume\s+\(3M\)[^\d]*([\d,]+\.?\d*)",
+                        r"Avg\s+Volume\s+\(3M\)[^\d]*([\d,]+\.?\d*)",
+                        r"Average\s+Volume[^\d]*([\d,]+\.?\d*)",
+                    ]
+                    
+                    for pattern in volume_patterns:
+                        match = re.search(pattern, page_text, re.IGNORECASE)
+                        if match:
+                            try:
+                                average_volume = _parse_float(match.group(1))
+                                print(f"[COMPANY_QUERY.3] ✓ Found Average Volume (3M): {average_volume}")
+                                break
+                            except ValueError:
+                                continue
+            except Exception as e:
+                print(f"[COMPANY_QUERY.3] ⚠ Error extracting average volume: {str(e)}")
+        
+        # Step 5: Create Company object with all extracted data
+        company = Company(
+            name=company_data.get("name", company_name),
+            code=company_data.get("code", ""),
+            detail_url=company_data.get("detail_url"),
+            price=company_data.get("price"),
+            eps=company_data.get("eps"),
+            pe_ratio=company_data.get("pe_ratio"),
+            dividend_yield=company_data.get("dividend_yield"),
+            roe=company_data.get("roe"),
+            market_cap=company_data.get("market_cap"),
+            sector=sector,
+            average_volume=average_volume,
+            watchlist=False
+        )
+        
+        print(f"[COMPANY_QUERY] ✓ Company data extracted successfully")
+        
+        # Return simplified response (no LLM analysis)
+        return CompanyQueryResponse(
+            query=query,
+            extracted_company_name=company_name,
+            company=company,
+            analysis="Company data extracted successfully.",
+            recommendation="not suggested",  # Default recommendation
+            confidence=None,
+            reasoning=None
+        )
+        
+    except Exception as e:
+        error_msg = f"Error processing company query: {str(e)}"
+        print(f"[COMPANY_QUERY] ⚠ {error_msg}")
+        agent_logger.error(str(e))
+        
+        # Return error response
+        return CompanyQueryResponse(
+            query=query,
+            extracted_company_name="",
+            company=None,
+            analysis=f"Error: {error_msg}",
+            recommendation="not suggested",
+            confidence=0.0,
+            reasoning="Could not extract company data"
+        )
 
 
 @log_agent_execution("klse_sector_agent")
@@ -244,10 +2423,6 @@ def get_klse_sector_companies(sector: str) -> SectorCompanies:
     print(f"[STEP 2] ✓ Sector mapped: '{sector}' → '{klse_sector}'")
     agent_logger.info("Sector mapped", input_data={"sector": sector, "klse_sector": klse_sector})
     
-    # Determine investment style based on sector
-    style = SECTOR_STYLE.get(klse_sector, "Blend")  # Default to Blend if not found
-    print(f"[STEP 2.1] Determined investment style: '{style}' for sector '{klse_sector}'")
-    
     try:
         # KLSE Screener base URL
         base_url = "https://www.klsescreener.com/v2/"
@@ -255,7 +2430,7 @@ def get_klse_sector_companies(sector: str) -> SectorCompanies:
         
         # Try to fetch data using requests first (faster if data is available)
         print(f"[STEP 4] Attempting to fetch via API/HTML parsing...")
-        companies = _fetch_companies_via_api(base_url, klse_sector, sector, style)
+        companies = _fetch_companies_via_api(base_url, klse_sector, sector)
         
         if not companies:
             # Fallback: Use Selenium for JavaScript-rendered content
@@ -263,7 +2438,7 @@ def get_klse_sector_companies(sector: str) -> SectorCompanies:
             print(f"[STEP 5.1] Note: Selenium requires ChromeDriver. If it fails, check ChromeDriver installation.")
             logger.info("Attempting to fetch via Selenium...")
             try:
-                companies = _fetch_companies_via_selenium(base_url, klse_sector, sector, style)
+                companies = _fetch_companies_via_selenium(base_url, klse_sector, sector)
                 if companies:
                     print(f"[STEP 5.2] ✓ Successfully fetched {len(companies)} companies via Selenium")
                 else:
@@ -275,13 +2450,23 @@ def get_klse_sector_companies(sector: str) -> SectorCompanies:
         else:
             print(f"[STEP 5] ✓ Successfully fetched {len(companies)} companies via API/HTML")
         
-        print(f"[STEP 6] Preparing response with {len(companies)} companies...")
+        # Filter companies by Average Volume (3M) >= 100,000
+        print(f"[STEP 6] Filtering companies by Average Volume (3M) >= 100,000...")
+        companies = filter_companies_by_volume(companies, min_volume=100000)
+        print(f"[STEP 6.1] ✓ After volume filtering: {len(companies)} companies remaining")
+        
+        # Analyze companies based on RSI(14) and Stochastic(14)
+        print(f"[STEP 7] Analyzing companies based on RSI(14) and Stochastic(14)...")
+        companies = analyze_companies_rsi_stochastic(companies)
+        print(f"[STEP 7.1] ✓ After RSI/Stochastic analysis: {len(companies)} companies analyzed")
+        
+        print(f"[STEP 8] Preparing response with {len(companies)} companies...")
         result = SectorCompanies(
             sector=sector,
             companies=companies,
             total_count=len(companies)
         )
-        print(f"[STEP 7] ✓ Complete! Returning {result.total_count} companies for sector '{sector}'")
+        print(f"[STEP 9] ✓ Complete! Returning {result.total_count} companies for sector '{sector}'")
         
         agent_logger.log_agent_end(
             input_data={"sector": sector, "klse_sector": klse_sector},
@@ -306,7 +2491,7 @@ def get_klse_sector_companies(sector: str) -> SectorCompanies:
         )
 
 
-def _fetch_companies_via_api(base_url: str, klse_sector: str, sector: str, style: str) -> List[Company]:
+def _fetch_companies_via_api(base_url: str, klse_sector: str, sector: str) -> List[Company]:
     """
     Attempt to fetch companies via API or static HTML parsing.
     
@@ -366,7 +2551,7 @@ def _fetch_companies_via_api(base_url: str, klse_sector: str, sector: str, style
             # Parse HTML to extract company data
             # This is a placeholder - actual parsing logic depends on KLSE Screener's HTML structure
             print(f"  [4.5] Extracting company data from HTML...")
-            companies = _parse_company_table(soup, klse_sector, style)
+            companies = _parse_company_table(soup, klse_sector)
             print(f"  [4.6] Extracted {len(companies)} companies from HTML")
             
             # If no companies found, try to find any table structure for debugging
@@ -388,7 +2573,7 @@ def _fetch_companies_via_api(base_url: str, klse_sector: str, sector: str, style
     return companies
 
 
-def _fetch_companies_via_selenium(base_url: str, klse_sector: str, sector: str, style: str) -> List[Company]:
+def _fetch_companies_via_selenium(base_url: str, klse_sector: str, sector: str) -> List[Company]:
     """
     Fetch companies using Selenium for JavaScript-rendered content.
     
@@ -528,32 +2713,13 @@ def _fetch_companies_via_selenium(base_url: str, klse_sector: str, sector: str, 
                 print(f"  [5.11] Waiting for sector selection to register...")
                 time.sleep(1)
                 
-                # Determine investment style based on sector
-                style = SECTOR_STYLE.get(klse_sector, "Blend")  # Default to Blend if not found
-                print(f"  [5.11.0] Determined investment style: '{style}' for sector '{klse_sector}'")
-                
-                # Define filter values based on style
-                filter_values = {
-                    "Value": {
-                        "pe_max": "20",
-                        "market_cap": "200",
-                        "ptbv_max": "3",
-                        "dy_min": "2",
-                        "roe_min": "10"
-                    },
-                    "Growth": {
-                        "pe_max": "25",
-                        "market_cap": "200",
-                        "roe_min": "12"
-                    },
-                    "Blend": {
-                        "pe_max": "20",
-                        "market_cap": "200",
-                        "roe_min": "10"
-                    }
+                # Define filter values (fixed values, no longer style-based)
+                filters = {
+                    "pe_max": "20",
+                    "market_cap": "200",
+                    "roe_min": "12"
                 }
-                filters = filter_values.get(style, filter_values["Blend"])
-                print(f"  [5.11.0.1] Filter values for {style} style: {filters}")
+                print(f"  [5.11.0] Using filter values: {filters}")
                 
                 # Fill in Market Cap (M) field
                 print(f"  [5.11.1] Looking for Market Cap (M) input field...")
@@ -798,76 +2964,6 @@ def _fetch_companies_via_selenium(base_url: str, klse_sector: str, sector: str, 
                 else:
                     print(f"  [5.11.39] ⚠ ROE min input field not found, continuing without setting it...")
                 
-                # Fill PTBV max and DY min for Value style
-                if style == "Value":
-                    # Fill PTBV max field
-                    print(f"  [5.11.40] Looking for PTBV (Price-to-Book Value) max input field...")
-                    ptbv_max_input = None
-                    try:
-                        ptbv_labels = driver.find_elements(By.XPATH, "//label[contains(text(), 'PTBV') or contains(text(), 'P/B')]")
-                        ptbv_texts = driver.find_elements(By.XPATH, "//*[contains(text(), 'PTBV') or contains(text(), 'P/B')]")
-                        
-                        for ptbv_element in list(ptbv_labels) + list(ptbv_texts):
-                            try:
-                                parent = ptbv_element.find_element(By.XPATH, "./ancestor::*[contains(@class, 'form') or contains(@class, 'row') or contains(@class, 'group') or contains(@class, 'field')][1]")
-                                inputs = parent.find_elements(By.TAG_NAME, "input")
-                                text_inputs = [inp for inp in inputs if inp.get_attribute("type") in ["text", "number", None] or inp.get_attribute("type") == ""]
-                                
-                                if len(text_inputs) >= 2:
-                                    ptbv_max_input = text_inputs[1]  # Second input is max
-                                    print(f"  [5.11.41] ✓ Found PTBV max input")
-                                    break
-                            except:
-                                continue
-                        
-                        if ptbv_max_input:
-                            try:
-                                ptbv_max_input.clear()
-                                print(f"  [5.11.42] Entering '{filters['ptbv_max']}' in PTBV max field...")
-                                ptbv_max_input.send_keys(filters['ptbv_max'])
-                                print(f"  [5.11.43] ✓ PTBV max field filled with '{filters['ptbv_max']}'")
-                                time.sleep(0.5)
-                            except Exception as e:
-                                print(f"  [5.11.44] ⚠ Failed to fill PTBV max field: {str(e)}")
-                        else:
-                            print(f"  [5.11.45] ⚠ PTBV max input field not found, continuing...")
-                    except Exception as e:
-                        print(f"  [5.11.46] ⚠ Error searching for PTBV max field: {str(e)}")
-                    
-                    # Fill DY min field
-                    print(f"  [5.11.47] Looking for DY (Dividend Yield) min input field...")
-                    dy_min_input = None
-                    try:
-                        dy_labels = driver.find_elements(By.XPATH, "//label[contains(text(), 'DY') or contains(text(), 'Dividend Yield')]")
-                        dy_texts = driver.find_elements(By.XPATH, "//*[contains(text(), 'DY') or contains(text(), 'Dividend Yield')]")
-                        
-                        for dy_element in list(dy_labels) + list(dy_texts):
-                            try:
-                                parent = dy_element.find_element(By.XPATH, "./ancestor::*[contains(@class, 'form') or contains(@class, 'row') or contains(@class, 'group') or contains(@class, 'field')][1]")
-                                inputs = parent.find_elements(By.TAG_NAME, "input")
-                                text_inputs = [inp for inp in inputs if inp.get_attribute("type") in ["text", "number", None] or inp.get_attribute("type") == ""]
-                                
-                                if len(text_inputs) >= 1:
-                                    dy_min_input = text_inputs[0]  # First input is min
-                                    print(f"  [5.11.48] ✓ Found DY min input")
-                                    break
-                            except:
-                                continue
-                        
-                        if dy_min_input:
-                            try:
-                                dy_min_input.clear()
-                                print(f"  [5.11.49] Entering '{filters['dy_min']}' in DY min field...")
-                                dy_min_input.send_keys(filters['dy_min'])
-                                print(f"  [5.11.50] ✓ DY min field filled with '{filters['dy_min']}'")
-                                time.sleep(0.5)
-                            except Exception as e:
-                                print(f"  [5.11.51] ⚠ Failed to fill DY min field: {str(e)}")
-                        else:
-                            print(f"  [5.11.52] ⚠ DY min input field not found, continuing...")
-                    except Exception as e:
-                        print(f"  [5.11.53] ⚠ Error searching for DY min field: {str(e)}")
-                
                 # Look for and click the "Screen" button to apply the filter
                 print(f"  [5.12] Looking for 'Screen' button to apply filter...")
                 screen_button = None
@@ -963,7 +3059,7 @@ def _fetch_companies_via_selenium(base_url: str, klse_sector: str, sector: str, 
                 print(f"  [5.16] Extracting company data from table...")
                 print(f"  [5.16.1] Using sector parameter: '{sector}' (klse_sector: '{klse_sector}')")
                 # Extract company data from the table - pass the original sector input
-                companies = _extract_companies_from_table(driver, sector, style)
+                companies = _extract_companies_from_table(driver, sector)
                 print(f"  [5.17] ✓ Extracted {len(companies)} companies from table")
                 
             except Exception as e:
@@ -994,7 +3090,7 @@ def _fetch_companies_via_selenium(base_url: str, klse_sector: str, sector: str, 
         return []
 
 
-def _parse_company_table(soup: BeautifulSoup, sector: str, style: str) -> List[Company]:
+def _parse_company_table(soup: BeautifulSoup, sector: str) -> List[Company]:
     """
     Parse company data from HTML table.
     
@@ -1033,7 +3129,7 @@ def _parse_company_table(soup: BeautifulSoup, sector: str, style: str) -> List[C
                 cells = row.find_all("td")
                 if len(cells) >= 2:
                     try:
-                        # Table structure: name (col 1), code (col 2), category (col 3), price (col 4), ..., eps (col 9), ..., pe (col 12), dy (col 13), roe (col 14), ..., mcap (col 16)
+                        # Table structure: name (col 1), code (col 2), price (col 4), ..., eps (col 9), ..., pe (col 12), dy (col 13), roe (col 14), ..., mcap (col 16)
                         # Extract name and check if it's a link
                         name_cell = cells[0]
                         name_link = name_cell.find("a")
@@ -1054,12 +3150,6 @@ def _parse_company_table(soup: BeautifulSoup, sector: str, style: str) -> List[C
                         # Remove [s] suffix from stock names (e.g., "BURSA [s]" -> "BURSA")
                         name = name.replace(" [s]", "").replace("[s]", "").strip()
                         code = cells[1].get_text(strip=True)
-                        category = cells[2].get_text(strip=True) if len(cells) > 2 else None
-                        
-                        # Filter out companies with "Leap Market" in category
-                        if category and "Leap Market" in category:
-                            continue
-                        
                         price = _parse_float(cells[3].get_text(strip=True)) if len(cells) > 3 else None
                         eps = _parse_float(cells[8].get_text(strip=True)) if len(cells) > 8 else None
                         pe_ratio = _parse_float(cells[11].get_text(strip=True)) if len(cells) > 11 else None
@@ -1069,12 +3159,11 @@ def _parse_company_table(soup: BeautifulSoup, sector: str, style: str) -> List[C
                         
                         # Debug first company to verify structure
                         if idx == 1:
-                            print(f"    [4.5.3.3] First company - name: '{name}', code: '{code}', category: '{category}', detail_url: '{detail_url}', price: {price}, eps: {eps}, pe: {pe_ratio}, dy: {dividend_yield}, roe: {roe}, mcap: {market_cap}")
+                            print(f"    [4.5.3.3] First company - name: '{name}', code: '{code}', detail_url: '{detail_url}', price: {price}, eps: {eps}, pe: {pe_ratio}, dy: {dividend_yield}, roe: {roe}, mcap: {market_cap}")
                         
                         company = Company(
                             name=name,
                             code=code,
-                            category=category,
                             detail_url=detail_url,
                             price=price,
                             eps=eps,
@@ -1082,8 +3171,7 @@ def _parse_company_table(soup: BeautifulSoup, sector: str, style: str) -> List[C
                             dividend_yield=dividend_yield,
                             roe=roe,
                             market_cap=market_cap,
-                            sector=sector,  # Use the sector parameter passed to function
-                            style=style  # Investment style based on sector
+                            sector=sector  # Use the sector parameter passed to function
                         )
                         companies.append(company)
                         if idx % 10 == 0:  # Log every 10 companies
@@ -1103,14 +3191,13 @@ def _parse_company_table(soup: BeautifulSoup, sector: str, style: str) -> List[C
     return companies
 
 
-def _extract_companies_from_table(driver, sector: str, style: str) -> List[Company]:
+def _extract_companies_from_table(driver, sector: str) -> List[Company]:
     """
     Extract company data from Selenium driver page.
     
     Args:
         driver: Selenium WebDriver instance
         sector: Sector name
-        style: Investment style (Value, Growth, or Blend)
         
     Returns:
         List of Company objects
@@ -1181,12 +3268,6 @@ def _extract_companies_from_table(driver, sector: str, style: str) -> List[Compa
                     # Remove [s] suffix from stock names
                     name = name.replace(" [s]", "").replace("[s]", "").strip()
                     code = cells[1].text.strip()
-                    category = cells[2].text.strip() if len(cells) > 2 else None
-                    
-                    # Filter out companies with "Leap Market" in category
-                    if category and "Leap Market" in category:
-                        continue
-                    
                     price = _parse_float(cells[3].text.strip()) if len(cells) > 3 else None
                     eps = _parse_float(cells[8].text.strip()) if len(cells) > 8 else None
                     pe_ratio = _parse_float(cells[11].text.strip()) if len(cells) > 11 else None
@@ -1196,12 +3277,11 @@ def _extract_companies_from_table(driver, sector: str, style: str) -> List[Compa
                     
                     # Debug first company to verify structure
                     if idx == 1:
-                        print(f"      [5.14.2.2] First company - name: '{name}', code: '{code}', category: '{category}', detail_url: '{detail_url}', price: {price}, eps: {eps}, pe: {pe_ratio}, dy: {dividend_yield}, roe: {roe}, mcap: {market_cap}, sector: '{sector}'")
+                        print(f"      [5.14.2.2] First company - name: '{name}', code: '{code}', detail_url: '{detail_url}', price: {price}, eps: {eps}, pe: {pe_ratio}, dy: {dividend_yield}, roe: {roe}, mcap: {market_cap}, sector: '{sector}'")
                     
                     company = Company(
                         name=name,
                         code=code,
-                        category=category,
                         detail_url=detail_url,
                         price=price,
                         eps=eps,
@@ -1209,8 +3289,7 @@ def _extract_companies_from_table(driver, sector: str, style: str) -> List[Compa
                         dividend_yield=dividend_yield,
                         roe=roe,
                         market_cap=market_cap,
-                        sector=sector,  # Use the sector parameter passed to function
-                        style=style  # Investment style based on sector
+                        sector=sector  # Use the sector parameter passed to function
                     )
                     companies.append(company)
                     if idx % 10 == 0:  # Log every 10 companies
@@ -1230,13 +3309,31 @@ def _extract_companies_from_table(driver, sector: str, style: str) -> List[Compa
 
 
 def _parse_float(value: str) -> Optional[float]:
-    """Parse float value, handling common formatting."""
+    """Parse float value, handling common formatting including %, B/M/K suffixes."""
     if not value or value == "-" or value == "N/A":
         return None
     try:
-        # Remove commas and other formatting
+        # Remove commas and RM
         cleaned = value.replace(",", "").replace("RM", "").strip()
-        return float(cleaned)
+        
+        # Handle percentage values (e.g., "1.07%")
+        if "%" in cleaned:
+            cleaned = cleaned.replace("%", "").strip()
+            return float(cleaned)
+        
+        # Handle B (billions), M (millions), K (thousands) suffixes
+        multiplier = 1
+        if cleaned.endswith("B") or cleaned.endswith("b"):
+            multiplier = 1000000000
+            cleaned = cleaned[:-1].strip()
+        elif cleaned.endswith("M") or cleaned.endswith("m"):
+            multiplier = 1000000
+            cleaned = cleaned[:-1].strip()
+        elif cleaned.endswith("K") or cleaned.endswith("k"):
+            multiplier = 1000
+            cleaned = cleaned[:-1].strip()
+        
+        return float(cleaned) * multiplier
     except (ValueError, AttributeError):
         return None
 

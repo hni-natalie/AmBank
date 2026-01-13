@@ -1,0 +1,56 @@
+.container {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+}
+
+.header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.icon {
+  font-size: 20px;
+}
+
+.title {
+  font-size: 16px;
+  font-weight: 700;
+  color: #1e293b;
+  margin: 0;
+}
+
+.countsContainer {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 160px; /* Ensure space for right alignment */
+}
+
+.countRow {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  width: 100%;
+  font-size: 14px;
+}
+
+.label {
+  color: #64748b;
+  font-weight: 500;
+}
+
+.value {
+  font-weight: 700;
+  font-size: 16px;
+}
+
+.positive {
+  color: #166534; /* Green */
+}
+
+.negative {
+  color: #ef4444; /* Red */
+}

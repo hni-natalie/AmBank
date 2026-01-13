@@ -1,136 +1,102 @@
 import React, { useState, useEffect } from 'react';
-import { Link } from 'react-router-dom';
-
-
-interface CompanyInfo {
-  company_name: string | null;
-  ticker: string | null;
-  sector: string | null;
-  peers: string[];
-}
-
-interface AggregatedAnalysis {
-  ticker: string | null;
-  company_name: string | null;
-  sector: string | null;
-  overall_stance: string;
-  weighted_confidence: number;
-  signal_strength: string;
-  positive_signals: {
-    count: number;
-    signals: string[];
-  };
-  adverse_signals: {
-    count: number;
-    signals: string[];
-  };
-  trend_signals: {
-    count: number;
-    signals: string[];
-  };
-  macro_analysis: {
-    stance: string;
-    confidence: number;
-    summary: string;
-    articles_count: number;
-  };
-  micro_analysis: {
-    stance: string;
-    confidence: number;
-    summary: string;
-    articles_count: number;
-  };
-  total_articles_analyzed: number;
-}
+import { Link, useNavigate } from 'react-router-dom';
+import { useAppStore } from '../store/appStore';
+import { analyzeUserInput, DashboardResponse } from '../api/dashboard';
 
 /**
  * Dashboard page showing macro and micro RAG signals.
  * Matches the existing dark mode ChatGPT-style UI.
  */
 export const DashboardPage: React.FC = () => {
+  const navigate = useNavigate();
+  const storeInput = useAppStore((state) => state.userInput);
+  
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  
-  // New state for ticker-based analysis
-  const [userInput, setUserInput] = useState('');
-  const [analyzing, setAnalyzing] = useState(false);
-  const [companyInfo, setCompanyInfo] = useState<CompanyInfo | null>(null);
-  const [analysis, setAnalysis] = useState<AggregatedAnalysis | null>(null);
+  const [data, setData] = useState<DashboardResponse | null>(null);
+
+  const ticker = storeInput?.ticker;
+  const rawInputName = storeInput?.companyName; // Fallback if needed
 
   useEffect(() => {
-    // Don't auto-fetch on mount - let user input company first
-  }, []);
+    const fetchData = async () => {
+      console.log('[Dashboard] Ticker from store:', ticker);
 
-  const handleAnalyzeCompany = async () => {
-    if (!userInput.trim()) {
-      setError('Please enter a company name or ticker');
-      return;
-    }
-
-    setAnalyzing(true);
-    setError(null);
-    setAnalysis(null);
-    setCompanyInfo(null);
-
-    try {
-      const response = await fetch('/api/dashboard/analyze', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ user_input: userInput }),
-      });
-
-      if (!response.ok) {
-        throw new Error('Failed to analyze company');
-      }
-
-      const data = await response.json();
-      
-      if (data.error) {
-        setError(data.error);
-        setCompanyInfo(data.company_info);
+      if (!ticker) {
+        // No ticker, don't auto-fetch.
         return;
       }
 
-      setCompanyInfo(data.company_info);
-      setAnalysis(data.analysis);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Unknown error');
-    } finally {
-      setAnalyzing(false);
-    }
-  };
+      setLoading(true);
+      setError(null);
+      setData(null);
 
-  const getStanceColor = (stance: string) => {
-    const stanceLower = stance.toLowerCase();
-    if (stanceLower.includes('risk_on') || stanceLower.includes('positive')) {
-      return '#10a37f'; // Green
-    } else if (stanceLower.includes('risk_off') || stanceLower.includes('negative')) {
-      return '#ef4444'; // Red
-    } else if (stanceLower.includes('neutral')) {
-      return '#f59e0b'; // Yellow/Orange
-    } else if (stanceLower.includes('error')) {
-      return '#8e8ea0'; // Gray
-    }
-    return '#8e8ea0';
-  };
+      try {
+        // We pass the ticker as the user input for the backend to identify/analyze
+        const response = await analyzeUserInput(ticker);
+        console.log('[Dashboard] analyzeUserInput response:', response);
+        setData(response);
+        
+        if (response.error) {
+          setError(response.error);
+        }
+      } catch (err: any) {
+        const msg = err instanceof Error ? err.message : 'Unknown error';
+        console.log('[Dashboard] error:', msg);
+        setError(msg);
+      } finally {
+        setLoading(false);
+      }
+    };
 
-  const getStanceLabel = (stance: string) => {
-    const stanceLower = stance.toLowerCase();
-    if (stanceLower.includes('risk_on') || stanceLower.includes('positive')) {
-      return 'BUY';
-    } else if (stanceLower.includes('risk_off') || stanceLower.includes('negative')) {
-      return 'SELL';
-    } else if (stanceLower.includes('neutral')) {
-      return 'HOLD';
-    } else if (stanceLower.includes('error')) {
-      return 'ERROR';
-    }
-    return stance.toUpperCase();
-  };
+    fetchData();
+  }, [ticker]);
 
-  if (loading || analyzing) {
+  // Safe extract analysis using the normalized shape
+  const analysis = data?.analysis;
+  const companyInfo = data?.companyInfo;
+
+  // Empty State / Redirect Prompt
+  if (!ticker && !loading && !data) {
+    return (
+      <div style={{
+        minHeight: '100vh',
+        backgroundColor: '#ffffff',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        flexDirection: 'column',
+        gap: '24px',
+        padding: '20px',
+        textAlign: 'center'
+      }}>
+        <div style={{ fontSize: '48px' }}>🔍</div>
+        <h2 style={{ fontSize: '24px', fontWeight: '600', color: '#1f2937' }}>
+          No Ticker Selected
+        </h2>
+        <p style={{ color: '#6b7280', maxWidth: '400px' }}>
+          Please go back to the home page and enter a valid Bursa Malaysia ticker (e.g., MAYBANK).
+        </p>
+        <button
+          onClick={() => navigate('/')}
+          style={{
+            padding: '12px 24px',
+            backgroundColor: '#10a37f',
+            color: '#ffffff',
+            border: 'none',
+            borderRadius: '8px',
+            fontSize: '16px',
+            fontWeight: '500',
+            cursor: 'pointer'
+          }}
+        >
+          Go to Home
+        </button>
+      </div>
+    );
+  }
+
+  if (loading) {
     return (
       <div style={{
         minHeight: '100vh',
@@ -150,7 +116,7 @@ export const DashboardPage: React.FC = () => {
           animation: 'spin 1s linear infinite'
         }} />
         <p style={{ color: '#6b7280', fontSize: '16px' }}>
-          {analyzing ? 'Analyzing company...' : 'Loading dashboard data...'}
+          Analyzing {ticker}...
         </p>
         <style>{`
           @keyframes spin {
@@ -173,6 +139,17 @@ export const DashboardPage: React.FC = () => {
       return 50; // Neutral/Cautious
     }
   };
+
+  // Safe values with defaults, just in case
+  const overallStance = analysis?.overallStance ?? 'neutral';
+  const signalStrength = analysis?.signalStrength ?? 'neutral';
+  const positiveSignals = analysis?.positiveSignals ?? { count: 0, signals: [] };
+  const adverseSignals = analysis?.adverseSignals ?? { count: 0, signals: [] };
+  const trendSignals = analysis?.trendSignals ?? { count: 0, signals: [] };
+  const sector = companyInfo?.sector || 'Sector';
+  // Use companyName from API, or fallback to name from store, or ticker
+  const companyNameDisplay = companyInfo?.companyName || rawInputName || ticker || 'Company';
+  const tickerDisplay = companyInfo?.ticker || ticker || 'N/A';
 
   return (
     <div style={{
@@ -207,7 +184,7 @@ export const DashboardPage: React.FC = () => {
                 color: '#4b5563',
                 margin: '0 0 16px 0'
               }}>
-                {analysis.company_name || 'Company'} ({analysis.ticker || 'N/A'}) - Comprehensive Market Intelligence
+                {companyNameDisplay} ({tickerDisplay}) - Comprehensive Market Intelligence
               </p>
             )}
             {!analysis && (
@@ -240,7 +217,7 @@ export const DashboardPage: React.FC = () => {
                 fontSize: '14px',
                 fontWeight: '500'
               }}>
-                {analysis.positive_signals.count + analysis.adverse_signals.count + analysis.trend_signals.count} Active Signals
+                {positiveSignals.count + adverseSignals.count + trendSignals.count} Active Signals
               </div>
             )}
             <Link
@@ -266,67 +243,6 @@ export const DashboardPage: React.FC = () => {
             >
               ← Back
             </Link>
-          </div>
-        </div>
-
-        {/* Company Input Section */}
-        <div style={{
-          backgroundColor: '#f9fafb',
-          borderRadius: '12px',
-          padding: '24px',
-          marginBottom: '32px',
-          border: '1px solid #e5e7eb'
-        }}>
-          <h2 style={{
-            fontSize: '20px',
-            fontWeight: '600',
-            margin: '0 0 16px 0',
-            color: '#111827'
-          }}>
-            Analyze Company
-          </h2>
-          <div style={{
-            display: 'flex',
-            gap: '12px'
-          }}>
-            <input
-              type="text"
-              value={userInput}
-              onChange={(e) => setUserInput(e.target.value)}
-              onKeyPress={(e) => {
-                if (e.key === 'Enter') {
-                  handleAnalyzeCompany();
-                }
-              }}
-              placeholder="Enter company name or ticker (e.g., 'Ambank' or 'AMBANK.KL')"
-              style={{
-                flex: 1,
-                padding: '12px 16px',
-                backgroundColor: '#ffffff',
-                border: '1px solid #d1d5db',
-                borderRadius: '8px',
-                color: '#111827',
-                fontSize: '15px',
-                outline: 'none'
-              }}
-            />
-            <button
-              onClick={handleAnalyzeCompany}
-              disabled={analyzing || !userInput.trim()}
-              style={{
-                padding: '12px 24px',
-                backgroundColor: analyzing || !userInput.trim() ? '#d1d5db' : '#10a37f',
-                color: '#fff',
-                border: 'none',
-                borderRadius: '8px',
-                cursor: analyzing || !userInput.trim() ? 'not-allowed' : 'pointer',
-                fontSize: '15px',
-                fontWeight: '500',
-                transition: 'background-color 0.2s'
-              }}
-            >
-              {analyzing ? 'Analyzing...' : 'Analyze'}
-            </button>
           </div>
         </div>
 
@@ -392,7 +308,7 @@ export const DashboardPage: React.FC = () => {
                 {/* Sentiment Indicator */}
                 <div style={{
                   position: 'absolute',
-                  left: `${getSentimentPosition(analysis.overall_stance)}%`,
+                  left: `${getSentimentPosition(overallStance)}%`,
                   top: '-32px',
                   transform: 'translateX(-50%)',
                   display: 'flex',
@@ -411,8 +327,8 @@ export const DashboardPage: React.FC = () => {
                     color: '#f59e0b',
                     whiteSpace: 'nowrap'
                   }}>
-                    {analysis.signal_strength === 'positive' ? 'BULLISH' : 
-                     analysis.signal_strength === 'adverse' ? 'BEARISH' : 'CAUTIOUS'}
+                    {signalStrength === 'positive' ? 'BULLISH' : 
+                     signalStrength === 'adverse' ? 'BEARISH' : 'CAUTIOUS'}
                   </div>
                 </div>
               </div>
@@ -448,7 +364,7 @@ export const DashboardPage: React.FC = () => {
               gap: '16px'
             }}>
               {/* Adverse Signals as CRITICAL/WATCH */}
-              {analysis.adverse_signals.signals.slice(0, 2).map((signal, idx) => {
+              {adverseSignals.signals.slice(0, 2).map((signal, idx) => {
                 const severity = idx === 0 ? 'CRITICAL' : 'WATCH';
                 const isCritical = severity === 'CRITICAL';
                 return (
@@ -548,7 +464,7 @@ export const DashboardPage: React.FC = () => {
                         margin: '8px 0 0 0',
                         fontStyle: 'italic'
                       }}>
-                        Direct impact on {analysis.sector || 'sector'} performance and competitive positioning
+                        Direct impact on {sector} performance and competitive positioning
                       </p>
                     </div>
                   </div>
@@ -556,7 +472,7 @@ export const DashboardPage: React.FC = () => {
               })}
 
               {/* Positive Signals as OPPORTUNITY */}
-              {analysis.positive_signals.signals.slice(0, 1).map((signal, idx) => (
+              {positiveSignals.signals.slice(0, 1).map((signal, idx) => (
                 <div
                   key={`positive-${idx}`}
                   style={{
@@ -649,7 +565,7 @@ export const DashboardPage: React.FC = () => {
                       margin: '8px 0 0 0',
                       fontStyle: 'italic'
                     }}>
-                      Could offset concerns and support growth in {analysis.sector || 'sector'}
+                      Could offset concerns and support growth in {sector}
                     </p>
                   </div>
                 </div>
@@ -729,13 +645,13 @@ export const DashboardPage: React.FC = () => {
                       fontSize: '14px',
                       color: '#111827'
                     }}>
-                      {analysis.positive_signals.count > analysis.adverse_signals.count ? 'Positive momentum' : 'Mixed signals'}
+                      {positiveSignals.count > adverseSignals.count ? 'Positive momentum' : 'Mixed signals'}
                     </span>
                     <div style={{
                       width: '8px',
                       height: '8px',
                       borderRadius: '50%',
-                      backgroundColor: analysis.positive_signals.count > analysis.adverse_signals.count ? '#10b981' : '#f59e0b'
+                      backgroundColor: positiveSignals.count > adverseSignals.count ? '#10b981' : '#f59e0b'
                     }} />
                   </div>
                 </div>
@@ -780,13 +696,13 @@ export const DashboardPage: React.FC = () => {
                       fontSize: '14px',
                       color: '#111827'
                     }}>
-                      {analysis.adverse_signals.count > 0 ? 'Intensifying' : 'Stable'}
+                      {adverseSignals.count > 0 ? 'Intensifying' : 'Stable'}
                     </span>
                     <div style={{
                       width: '8px',
                       height: '8px',
                       borderRadius: '50%',
-                      backgroundColor: analysis.adverse_signals.count > 0 ? '#ef4444' : '#10b981'
+                      backgroundColor: adverseSignals.count > 0 ? '#ef4444' : '#10b981'
                     }} />
                   </div>
                 </div>
@@ -831,13 +747,13 @@ export const DashboardPage: React.FC = () => {
                       fontSize: '14px',
                       color: '#111827'
                     }}>
-                      {analysis.signal_strength === 'positive' ? 'Favorable' : analysis.signal_strength === 'adverse' ? 'Challenging' : 'Neutral'}
+                      {signalStrength === 'positive' ? 'Favorable' : signalStrength === 'adverse' ? 'Challenging' : 'Neutral'}
                     </span>
                     <div style={{
                       width: '8px',
                       height: '8px',
                       borderRadius: '50%',
-                      backgroundColor: analysis.signal_strength === 'positive' ? '#10b981' : analysis.signal_strength === 'adverse' ? '#ef4444' : '#f59e0b'
+                      backgroundColor: signalStrength === 'positive' ? '#10b981' : signalStrength === 'adverse' ? '#ef4444' : '#f59e0b'
                     }} />
                   </div>
                 </div>
@@ -883,7 +799,7 @@ export const DashboardPage: React.FC = () => {
                     color: '#111827',
                     fontWeight: '500'
                   }}>
-                    Neutral for {analysis.sector || 'sector'} investments
+                    Neutral for {sector} investments
                   </div>
                 </div>
 
@@ -903,7 +819,7 @@ export const DashboardPage: React.FC = () => {
                     color: '#111827',
                     fontWeight: '500'
                   }}>
-                    {analysis.macro_analysis.summary.substring(0, 60)}...
+                    {analysis.macroAnalysis.summary.substring(0, 60)}...
                   </div>
                 </div>
 
@@ -923,7 +839,7 @@ export const DashboardPage: React.FC = () => {
                     color: '#111827',
                     fontWeight: '500'
                   }}>
-                    {analysis.signal_strength === 'positive' ? 'Bullish' : analysis.signal_strength === 'adverse' ? 'Bearish' : 'Cautious'}
+                    {signalStrength === 'positive' ? 'Bullish' : signalStrength === 'adverse' ? 'Bearish' : 'Cautious'}
                   </div>
                 </div>
 
@@ -942,15 +858,61 @@ export const DashboardPage: React.FC = () => {
                     color: '#111827',
                     fontWeight: '500'
                   }}>
-                    {analysis.positive_signals.count > analysis.adverse_signals.count ? 'Supportive' : 'Mixed'}
+                    {positiveSignals.count > adverseSignals.count ? 'Supportive' : 'Mixed'}
                   </div>
                 </div>
               </div>
             </div>
           </div>
         )}
+
+        {/* Debug Viewer */}
+        <div style={{
+          marginTop: '60px',
+          padding: '20px',
+          backgroundColor: '#f9fafb',
+          borderRadius: '8px',
+          border: '1px solid #e5e7eb'
+        }}>
+          <details>
+            <summary style={{
+              cursor: 'pointer',
+              fontWeight: '500',
+              color: '#4b5563'
+            }}>
+              Debug: Raw API Response & State
+            </summary>
+            <div style={{ marginTop: '16px' }}>
+              <div style={{ marginBottom: '16px' }}>
+                <h4 style={{ margin: '0 0 8px 0', fontSize: '14px' }}>Store State:</h4>
+                <pre style={{
+                  fontSize: '12px',
+                  backgroundColor: '#1f2937',
+                  color: '#f3f4f6',
+                  padding: '12px',
+                  borderRadius: '6px',
+                  overflow: 'auto'
+                }}>
+                  {JSON.stringify(storeInput, null, 2)}
+                </pre>
+              </div>
+              <div>
+                <h4 style={{ margin: '0 0 8px 0', fontSize: '14px' }}>API Response:</h4>
+                <pre style={{
+                  fontSize: '12px',
+                  backgroundColor: '#1f2937',
+                  color: '#f3f4f6',
+                  padding: '12px',
+                  borderRadius: '6px',
+                  overflow: 'auto'
+                }}>
+                  {JSON.stringify(data, null, 2)}
+                </pre>
+              </div>
+            </div>
+          </details>
+        </div>
       </div>
     </div>
   );
 };
-

@@ -1,0 +1,358 @@
+.container {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  width: 100%;
+}
+
+.sentimentSection {
+  background-color: #ffffff;
+  border: 1px solid #e2e8f0;
+  border-radius: 12px;
+  padding: 16px;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
+}
+
+.sectionTitle {
+  font-size: 16px;
+  font-weight: 600;
+  color: #1e293b;
+  margin: 0 0 12px 0;
+}
+
+.sectionTitleSmall {
+  font-size: 15px;
+  font-weight: 600;
+  color: #1e293b;
+  margin: 0;
+}
+
+.sectionHeader {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.sectionIcon {
+  font-size: 16px;
+}
+
+.sentimentBarContainer {
+  position: relative;
+  padding: 8px 0 20px 0;
+}
+
+.sentimentBar {
+  position: relative;
+  height: 6px;
+  background-color: #e5e7eb;
+  border-radius: 4px;
+  margin-bottom: 32px;
+}
+
+.barLabel {
+  position: absolute;
+  left: 0;
+  top: -20px;
+  font-size: 11px;
+  color: #64748b;
+  font-weight: 500;
+}
+
+.barLabelRight {
+  position: absolute;
+  right: 0;
+  top: -20px;
+  font-size: 11px;
+  color: #64748b;
+  font-weight: 500;
+}
+
+.sentimentIndicator {
+  position: absolute;
+  top: -28px;
+  transform: translateX(-50%);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+}
+
+.indicatorIcon {
+  font-size: 18px;
+}
+
+.indicatorLabel {
+  font-size: 13px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.developmentsSection {
+  background-color: #ffffff;
+  border: 1px solid #e2e8f0;
+  border-radius: 12px;
+  padding: 16px;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
+}
+
+.developmentsList {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.developmentCard {
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+  padding: 14px;
+  border-radius: 8px;
+  border: 1px solid;
+}
+
+.criticalCard {
+  border-color: #fecaca;
+  background-color: #ffffff;
+}
+
+.watchCard {
+  border-color: #fef3c7;
+  background-color: #ffffff;
+}
+
+.opportunityCard {
+  border-color: #d1fae5;
+  background-color: #ffffff;
+}
+
+.cardIcon {
+  width: 32px;
+  height: 32px;
+  border-radius: 6px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  font-size: 16px;
+}
+
+.criticalCard .cardIcon {
+  background-color: #fee2e2;
+}
+
+.watchCard .cardIcon {
+  background-color: #fef3c7;
+}
+
+.opportunityCard .cardIcon {
+  background-color: #d1fae5;
+}
+
+.cardContent {
+  flex: 1;
+  min-width: 0;
+}
+
+.cardHeader {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  margin-bottom: 6px;
+  gap: 8px;
+}
+
+.cardTitle {
+  font-size: 13px;
+  font-weight: 600;
+  margin: 0;
+  color: #1e293b;
+  flex: 1;
+}
+
+.severityBadge {
+  padding: 3px 10px;
+  border-radius: 12px;
+  font-size: 10px;
+  font-weight: 600;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.criticalBadge {
+  background-color: #fee2e2;
+  color: #991b1b;
+}
+
+.watchBadge {
+  background-color: #fef3c7;
+  color: #92400e;
+}
+
+.opportunityBadge {
+  background-color: #d1fae5;
+  color: #065f46;
+}
+
+.cardText {
+  font-size: 12px;
+  color: #475569;
+  margin: 0 0 8px 0;
+  line-height: 1.5;
+}
+
+.cardMeta {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  font-size: 11px;
+  color: #64748b;
+  margin-bottom: 6px;
+}
+
+.confidenceDots {
+  display: flex;
+  gap: 4px;
+  align-items: center;
+}
+
+.dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+}
+
+.cardImpact {
+  font-size: 11px;
+  color: #64748b;
+  margin: 6px 0 0 0;
+  font-style: italic;
+}
+
+.contextGrid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+}
+
+.contextCard {
+  background-color: #ffffff;
+  border: 1px solid #e2e8f0;
+  border-radius: 12px;
+  padding: 16px;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
+}
+
+.trendsList {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.trendItem {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 8px 0;
+  border-bottom: 1px solid #e5e7eb;
+}
+
+.trendItem:last-child {
+  border-bottom: none;
+}
+
+.trendLeft {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.trendIcon {
+  width: 28px;
+  height: 28px;
+  border-radius: 4px;
+  background-color: #f3f4f6;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 14px;
+}
+
+.trendLabel, .macroLabel {
+  font-size: 13px;
+  color: #334155;
+  font-weight: 500;
+}
+
+.trendRight {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.trendValue {
+  font-size: 12px;
+  color: #1e293b;
+}
+
+.trendDot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+}
+
+.macroList {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.macroItem {
+  padding: 8px 0;
+  border-bottom: 1px solid #e5e7eb;
+}
+
+.macroItemLast {
+  padding: 8px 0;
+}
+
+.macroLabel {
+  font-size: 11px;
+  color: #64748b;
+  margin-bottom: 4px;
+}
+
+.macroValue {
+  font-size: 12px;
+  color: #1e293b;
+  font-weight: 500;
+}
+
+@media (max-width: 1024px) {
+  .contextGrid {
+    grid-template-columns: 1fr;
+    gap: 12px;
+  }
+}
+
+@media (max-width: 768px) {
+  .container {
+    gap: 16px;
+  }
+
+  .sentimentSection,
+  .developmentsSection,
+  .contextCard {
+    padding: 14px;
+  }
+
+  .cardHeader {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .severityBadge {
+    align-self: flex-start;
+  }
+}

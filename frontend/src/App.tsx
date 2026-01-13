@@ -6,6 +6,7 @@ import { HomePage } from './pages/HomePage';
 import { NewsPage } from './pages/NewsPage';
 import { CompaniesPage } from './pages/CompaniesPage';
 import { FinalListPage } from './pages/FinalListPage';
+import { DashboardPage } from './pages/DashboardPage';
 
 /**
  * Main App component - handles routing.

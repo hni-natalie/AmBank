@@ -1,7 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { useAppStore } from '../store/appStore';
-import { analyzeUserInput, DashboardResponse } from '../api/dashboard';
+import { analyzeUserInput, searchCompany, DashboardResponse, CompanySnapshot } from '../api/dashboard';
+import QuickSnapshot from '../components/dashboard/QuickSnapshot';
 
 /**
  * Dashboard page showing macro and micro RAG signals.
@@ -13,7 +14,12 @@ export const DashboardPage: React.FC = () => {
   
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [data, setData] = useState<DashboardResponse | null>(null);
+  
+  // Data States
+  const [dashboardData, setDashboardData] = useState<DashboardResponse | null>(null);
+  const [snapshotData, setSnapshotData] = useState<CompanySnapshot | null>(null);
+  
+  // UI States
   const [marketSignalsOpen, setMarketSignalsOpen] = useState(true);
 
   const ticker = storeInput?.ticker;
@@ -30,16 +36,24 @@ export const DashboardPage: React.FC = () => {
 
       setLoading(true);
       setError(null);
-      setData(null);
+      setDashboardData(null);
+      setSnapshotData(null);
 
       try {
-        // We pass the ticker as the user input for the backend to identify/analyze
-        const response = await analyzeUserInput(ticker);
-        console.log('[Dashboard] analyzeUserInput response:', response);
-        setData(response);
+        // Parallel Fetch: Analysis (Left) + Snapshot (Right)
+        const [analysisRes, snapshotRes] = await Promise.all([
+          analyzeUserInput(ticker),
+          searchCompany(ticker)
+        ]);
+
+        console.log('[Dashboard] Analysis:', analysisRes);
+        console.log('[Dashboard] Snapshot:', snapshotRes);
+
+        setDashboardData(analysisRes);
+        setSnapshotData(snapshotRes);
         
-        if (response.error) {
-          setError(response.error);
+        if (analysisRes.error) {
+          setError(analysisRes.error);
         }
       } catch (err: any) {
         const msg = err instanceof Error ? err.message : 'Unknown error';
@@ -54,12 +68,11 @@ export const DashboardPage: React.FC = () => {
   }, [ticker]);
 
   // Safe extract analysis using the normalized shape
-  const analysis = data?.analysis;
-  const companyInfo = data?.companyInfo;
+  const analysis = dashboardData?.analysis;
+  const companyInfo = dashboardData?.companyInfo;
 
   // Empty State / Redirect Prompt
-  if (!ticker && !loading && !data) {
-    // ... (keep empty state same)
+  if (!ticker && !loading && !dashboardData) {
     return (
       <div style={{
         minHeight: '100vh',
@@ -99,7 +112,6 @@ export const DashboardPage: React.FC = () => {
   }
 
   if (loading) {
-    // ... (keep loading state same)
     return (
       <div style={{
         minHeight: '100vh',
@@ -181,7 +193,7 @@ export const DashboardPage: React.FC = () => {
       color: '#1f2937'
     }}>
       <div style={{
-        maxWidth: '1200px',
+        maxWidth: '1400px',
         margin: '0 auto'
       }}>
         {/* Header / Hero */}
@@ -251,289 +263,329 @@ export const DashboardPage: React.FC = () => {
           </div>
         )}
 
-        {/* Speed Meter / Overall Sentiment */}
-        {analysis && (
-          <div style={{
-            marginBottom: '48px',
-            display: 'flex',
-            justifyContent: 'center',
-            alignItems: 'center',
-            flexDirection: 'column'
-          }}>
-            <div style={{ position: 'relative', width: '300px', height: '160px', overflow: 'hidden' }}>
-              {/* Gauge Background */}
-              <div style={{
-                position: 'absolute',
-                bottom: 0,
-                left: '50%',
-                transform: 'translateX(-50%)',
-                width: '300px',
-                height: '150px',
-                borderRadius: '150px 150px 0 0',
-                backgroundColor: '#e5e7eb'
-              }} />
-              {/* Gauge Fill */}
-              <div style={{
-                position: 'absolute',
-                bottom: 0,
-                left: '50%',
-                transformOrigin: 'bottom center',
-                transform: `translateX(-50%) rotate(${(sentimentScore / 100) * 180 - 180}deg)`,
-                width: '300px',
-                height: '150px',
-                borderRadius: '150px 150px 0 0',
-                backgroundColor: gaugeColor,
-                transition: 'transform 1s ease-out, background-color 0.5s'
-              }} />
-              
-              {/* Center Value */}
-              <div style={{
-                position: 'absolute',
-                bottom: '0',
-                left: '50%',
-                transform: 'translateX(-50%)',
-                textAlign: 'center',
-                zIndex: 10
-              }}>
-                <div style={{
-                  fontSize: '48px',
-                  fontWeight: '800',
-                  color: '#111827',
-                  lineHeight: '1'
-                }}>
-                  {sentimentScore}%
-                </div>
-              </div>
-            </div>
-            {/* Label below gauge */}
-            <div style={{
-              marginTop: '16px',
-              fontSize: '18px',
-              fontWeight: '700',
-              color: gaugeColor,
-              textTransform: 'uppercase',
-              letterSpacing: '1px'
-            }}>
-              {overallStance.replace('_', ' ')}
-            </div>
-          </div>
-        )}
-
-        {/* Market Signals (Toggle) */}
-        {analysis && (
-          <div style={{
-            marginBottom: '40px',
-            border: '1px solid #e5e7eb',
-            borderRadius: '12px',
-            overflow: 'hidden'
-          }}>
-            <div 
-              onClick={() => setMarketSignalsOpen(!marketSignalsOpen)}
-              style={{
-                backgroundColor: '#f9fafb',
-                padding: '20px',
-                cursor: 'pointer',
-                display: 'flex',
-                justifyContent: 'space-between',
-                alignItems: 'center',
-                userSelect: 'none'
-              }}
-            >
-              <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                  <span style={{ fontSize: '20px' }}>⚡</span>
-                  <h2 style={{ fontSize: '18px', fontWeight: '700', margin: 0, color: '#111827' }}>
-                    Market Signals
-                  </h2>
-                </div>
-                <div style={{ display: 'flex', gap: '8px' }}>
-                  <span style={{
-                    backgroundColor: '#dcfce7',
-                    color: '#15803d',
-                    padding: '2px 8px',
-                    borderRadius: '9999px',
-                    fontSize: '14px',
-                    fontWeight: '700'
-                  }}>
-                    + {positiveSignals.count}
-                  </span>
-                  <span style={{
-                    backgroundColor: '#fee2e2',
-                    color: '#b91c1c',
-                    padding: '2px 8px',
-                    borderRadius: '9999px',
-                    fontSize: '14px',
-                    fontWeight: '700'
-                  }}>
-                    - {adverseSignals.count}
-                  </span>
-                </div>
-              </div>
-              <div style={{
-                transform: marketSignalsOpen ? 'rotate(180deg)' : 'rotate(0deg)',
-                transition: 'transform 0.2s',
-                color: '#6b7280'
-              }}>
-                ▼
-              </div>
-            </div>
-
-            {marketSignalsOpen && (
-              <div style={{ padding: '24px', backgroundColor: '#ffffff', display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '32px' }}>
-                {/* Positive Column */}
-                <div>
-                  <h3 style={{ fontSize: '14px', fontWeight: '600', color: '#15803d', marginBottom: '16px', textTransform: 'uppercase' }}>
-                    Positive Signals
-                  </h3>
-                  {positiveSignals.signals.length === 0 && (
-                    <div style={{ color: '#9ca3af', fontStyle: 'italic', fontSize: '14px' }}>None detected</div>
-                  )}
-                  <ul style={{ padding: 0, margin: 0, listStyle: 'none', display: 'flex', flexDirection: 'column', gap: '12px' }}>
-                    {positiveSignals.signals.map((signal, idx) => (
-                      <li key={idx} style={{ display: 'flex', alignItems: 'flex-start', gap: '10px' }}>
-                        <span style={{ color: '#10b981', marginTop: '4px' }}>●</span>
-                        <span style={{ fontSize: '14px', color: '#374151', lineHeight: '1.5' }}>{signal}</span>
-                      </li>
-                    ))}
-                  </ul>
-                </div>
-
-                {/* Negative Column */}
-                <div>
-                  <h3 style={{ fontSize: '14px', fontWeight: '600', color: '#b91c1c', marginBottom: '16px', textTransform: 'uppercase' }}>
-                    Negative Signals
-                  </h3>
-                  {adverseSignals.signals.length === 0 && (
-                    <div style={{ color: '#9ca3af', fontStyle: 'italic', fontSize: '14px' }}>None detected</div>
-                  )}
-                  <ul style={{ padding: 0, margin: 0, listStyle: 'none', display: 'flex', flexDirection: 'column', gap: '12px' }}>
-                    {adverseSignals.signals.map((signal, idx) => (
-                      <li key={idx} style={{ display: 'flex', alignItems: 'flex-start', gap: '10px' }}>
-                        <span style={{ color: '#ef4444', marginTop: '4px' }}>●</span>
-                        <span style={{ fontSize: '14px', color: '#374151', lineHeight: '1.5' }}>{signal}</span>
-                      </li>
-                    ))}
-                  </ul>
-                </div>
-              </div>
-            )}
-          </div>
-        )}
-
-        {/* Industry Trends & Macro Context */}
-        {analysis && (
+        {/* Main Content Grid (2 Columns) */}
+        {dashboardData && (
           <div style={{
             display: 'grid',
-            gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))',
-            gap: '32px',
-            marginBottom: '40px'
+            gridTemplateColumns: '1fr 1fr', // 2 Columns
+            gap: '40px',
+            alignItems: 'start'
           }}>
-            {/* Industry Trends */}
-            <div style={{ backgroundColor: '#f9fafb', padding: '24px', borderRadius: '12px' }}>
-              <div style={{
-                display: 'flex',
-                alignItems: 'center',
-                gap: '8px',
-                marginBottom: '20px'
-              }}>
-                <span style={{ fontSize: '18px' }}>📈</span>
-                <h2 style={{
-                  fontSize: '18px',
-                  fontWeight: '700',
-                  margin: 0,
-                  color: '#111827'
+            
+            {/* LEFT COLUMN: Analysis Insights */}
+            <div>
+              {/* Speed Meter / Overall Sentiment */}
+              {analysis && (
+                <div style={{
+                  marginBottom: '48px',
+                  display: 'flex',
+                  justifyContent: 'center',
+                  alignItems: 'center',
+                  flexDirection: 'column'
                 }}>
-                  Industry Trends
-                </h2>
-              </div>
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
-                {/* Sector Growth */}
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                  <span style={{ fontSize: '14px', color: '#4b5563', fontWeight: '500' }}>Sector Growth</span>
+                  <div style={{ position: 'relative', width: '300px', height: '160px', overflow: 'hidden' }}>
+                    {/* Gauge Background */}
+                    <div style={{
+                      position: 'absolute',
+                      bottom: 0,
+                      left: '50%',
+                      transform: 'translateX(-50%)',
+                      width: '300px',
+                      height: '150px',
+                      borderRadius: '150px 150px 0 0',
+                      backgroundColor: '#e5e7eb'
+                    }} />
+                    {/* Gauge Fill */}
+                    <div style={{
+                      position: 'absolute',
+                      bottom: 0,
+                      left: '50%',
+                      transformOrigin: 'bottom center',
+                      transform: `translateX(-50%) rotate(${(sentimentScore / 100) * 180 - 180}deg)`,
+                      width: '300px',
+                      height: '150px',
+                      borderRadius: '150px 150px 0 0',
+                      backgroundColor: gaugeColor,
+                      transition: 'transform 1s ease-out, background-color 0.5s'
+                    }} />
+                    
+                    {/* Center Value */}
+                    <div style={{
+                      position: 'absolute',
+                      bottom: '0',
+                      left: '50%',
+                      transform: 'translateX(-50%)',
+                      textAlign: 'center',
+                      zIndex: 10
+                    }}>
+                      <div style={{
+                        fontSize: '48px',
+                        fontWeight: '800',
+                        color: '#111827',
+                        lineHeight: '1'
+                      }}>
+                        {sentimentScore}%
+                      </div>
+                    </div>
+                  </div>
+                  {/* Label below gauge */}
                   <div style={{
-                    width: '32px',
-                    height: '12px',
-                    borderRadius: '6px',
-                    backgroundColor: getTrendColor(positiveSignals.count > adverseSignals.count, adverseSignals.count > positiveSignals.count)
-                  }} />
+                    marginTop: '16px',
+                    fontSize: '18px',
+                    fontWeight: '700',
+                    color: gaugeColor,
+                    textTransform: 'uppercase',
+                    letterSpacing: '1px'
+                  }}>
+                    {overallStance.replace('_', ' ')}
+                  </div>
                 </div>
-                {/* Competition */}
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                  <span style={{ fontSize: '14px', color: '#4b5563', fontWeight: '500' }}>Competition</span>
-                  <div style={{
-                    width: '32px',
-                    height: '12px',
-                    borderRadius: '6px',
-                    backgroundColor: getTrendColor(false, adverseSignals.count > 0) // Assume competition risk if adverse signals exist
-                  }} />
+              )}
+
+              {/* Market Signals (Toggle) */}
+              {analysis && (
+                <div style={{
+                  marginBottom: '40px',
+                  border: '1px solid #e5e7eb',
+                  borderRadius: '12px',
+                  overflow: 'hidden'
+                }}>
+                  <div 
+                    onClick={() => setMarketSignalsOpen(!marketSignalsOpen)}
+                    style={{
+                      backgroundColor: '#f9fafb',
+                      padding: '20px',
+                      cursor: 'pointer',
+                      display: 'flex',
+                      justifyContent: 'space-between',
+                      alignItems: 'center',
+                      userSelect: 'none'
+                    }}
+                  >
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                        <span style={{ fontSize: '20px' }}>⚡</span>
+                        <h2 style={{ fontSize: '18px', fontWeight: '700', margin: 0, color: '#111827' }}>
+                          Market Signals
+                        </h2>
+                      </div>
+                      <div style={{ display: 'flex', gap: '8px' }}>
+                        <span style={{
+                          backgroundColor: '#dcfce7',
+                          color: '#15803d',
+                          padding: '2px 8px',
+                          borderRadius: '9999px',
+                          fontSize: '14px',
+                          fontWeight: '700'
+                        }}>
+                          + {positiveSignals.count}
+                        </span>
+                        <span style={{
+                          backgroundColor: '#fee2e2',
+                          color: '#b91c1c',
+                          padding: '2px 8px',
+                          borderRadius: '9999px',
+                          fontSize: '14px',
+                          fontWeight: '700'
+                        }}>
+                          - {adverseSignals.count}
+                        </span>
+                      </div>
+                    </div>
+                    <div style={{
+                      transform: marketSignalsOpen ? 'rotate(180deg)' : 'rotate(0deg)',
+                      transition: 'transform 0.2s',
+                      color: '#6b7280'
+                    }}>
+                      ▼
+                    </div>
+                  </div>
+
+                  {marketSignalsOpen && (
+                    <div style={{ padding: '24px', backgroundColor: '#ffffff', display: 'flex', flexDirection: 'column', gap: '24px' }}>
+                      {/* Positive Column */}
+                      <div>
+                        <h3 style={{ fontSize: '14px', fontWeight: '600', color: '#15803d', marginBottom: '8px', textTransform: 'uppercase' }}>
+                          Positive Signals
+                        </h3>
+                        {positiveSignals.signals.length === 0 && (
+                          <div style={{ color: '#9ca3af', fontStyle: 'italic', fontSize: '14px' }}>None detected</div>
+                        )}
+                        <ul style={{ padding: 0, margin: 0, listStyle: 'none', display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                          {positiveSignals.signals.map((signal, idx) => (
+                            <li key={idx} style={{ display: 'flex', alignItems: 'flex-start', gap: '10px' }}>
+                              <span style={{ color: '#10b981', marginTop: '4px' }}>●</span>
+                              <span style={{ fontSize: '14px', color: '#374151', lineHeight: '1.5' }}>{signal}</span>
+                            </li>
+                          ))}
+                        </ul>
+                      </div>
+
+                      {/* Negative Column */}
+                      <div>
+                        <h3 style={{ fontSize: '14px', fontWeight: '600', color: '#b91c1c', marginBottom: '8px', textTransform: 'uppercase' }}>
+                          Negative Signals
+                        </h3>
+                        {adverseSignals.signals.length === 0 && (
+                          <div style={{ color: '#9ca3af', fontStyle: 'italic', fontSize: '14px' }}>None detected</div>
+                        )}
+                        <ul style={{ padding: 0, margin: 0, listStyle: 'none', display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                          {adverseSignals.signals.map((signal, idx) => (
+                            <li key={idx} style={{ display: 'flex', alignItems: 'flex-start', gap: '10px' }}>
+                              <span style={{ color: '#ef4444', marginTop: '4px' }}>●</span>
+                              <span style={{ fontSize: '14px', color: '#374151', lineHeight: '1.5' }}>{signal}</span>
+                            </li>
+                          ))}
+                        </ul>
+                      </div>
+                    </div>
+                  )}
                 </div>
-                {/* Market Conditions */}
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                  <span style={{ fontSize: '14px', color: '#4b5563', fontWeight: '500' }}>Market Conditions</span>
-                  <div style={{
-                    width: '32px',
-                    height: '12px',
-                    borderRadius: '6px',
-                    backgroundColor: sentimentScore >= 60 ? '#10b981' : sentimentScore <= 40 ? '#ef4444' : '#f59e0b'
-                  }} />
+              )}
+
+              {/* Industry Trends & Macro Context */}
+              {analysis && (
+                <div style={{
+                  display: 'flex',
+                  flexDirection: 'column',
+                  gap: '32px'
+                }}>
+                  {/* Industry Trends */}
+                  <div style={{ backgroundColor: '#f9fafb', padding: '24px', borderRadius: '12px' }}>
+                    <div style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '8px',
+                      marginBottom: '20px'
+                    }}>
+                      <span style={{ fontSize: '18px' }}>📈</span>
+                      <h2 style={{
+                        fontSize: '18px',
+                        fontWeight: '700',
+                        margin: 0,
+                        color: '#111827'
+                      }}>
+                        Industry Trends
+                      </h2>
+                    </div>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+                      {/* Sector Growth */}
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                        <span style={{ fontSize: '14px', color: '#4b5563', fontWeight: '500' }}>Sector Growth</span>
+                        <div style={{
+                          width: '32px',
+                          height: '12px',
+                          borderRadius: '6px',
+                          backgroundColor: getTrendColor(positiveSignals.count > adverseSignals.count, adverseSignals.count > positiveSignals.count)
+                        }} />
+                      </div>
+                      {/* Competition */}
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                        <span style={{ fontSize: '14px', color: '#4b5563', fontWeight: '500' }}>Competition</span>
+                        <div style={{
+                          width: '32px',
+                          height: '12px',
+                          borderRadius: '6px',
+                          backgroundColor: getTrendColor(false, adverseSignals.count > 0) // Assume competition risk if adverse signals exist
+                        }} />
+                      </div>
+                      {/* Market Conditions */}
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                        <span style={{ fontSize: '14px', color: '#4b5563', fontWeight: '500' }}>Market Conditions</span>
+                        <div style={{
+                          width: '32px',
+                          height: '12px',
+                          borderRadius: '6px',
+                          backgroundColor: sentimentScore >= 60 ? '#10b981' : sentimentScore <= 40 ? '#ef4444' : '#f59e0b'
+                        }} />
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Macro Context */}
+                  <div style={{ backgroundColor: '#f9fafb', padding: '24px', borderRadius: '12px' }}>
+                    <div style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '8px',
+                      marginBottom: '20px'
+                    }}>
+                      <span style={{ fontSize: '18px' }}>🌍</span>
+                      <h2 style={{
+                        fontSize: '18px',
+                        fontWeight: '700',
+                        margin: 0,
+                        color: '#111827'
+                      }}>
+                        Macro Context
+                      </h2>
+                    </div>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+                      {/* Interest Rates */}
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                        <span style={{ fontSize: '14px', color: '#4b5563', fontWeight: '500' }}>Interest Rates</span>
+                        <div style={{
+                          width: '32px',
+                          height: '12px',
+                          borderRadius: '6px',
+                          backgroundColor: '#f59e0b' // Neutral as default for now
+                        }} />
+                      </div>
+                      {/* Economic Conditions */}
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                        <span style={{ fontSize: '14px', color: '#4b5563', fontWeight: '500' }}>Economic Conditions</span>
+                        <div style={{
+                          width: '32px',
+                          height: '12px',
+                          borderRadius: '6px',
+                          backgroundColor: analysis.macroAnalysis?.summary?.toLowerCase().includes('positive') ? '#10b981' : '#f59e0b'
+                        }} />
+                      </div>
+                      {/* Market Sentiment */}
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                        <span style={{ fontSize: '14px', color: '#4b5563', fontWeight: '500' }}>Market Sentiment</span>
+                        <div style={{
+                          width: '32px',
+                          height: '12px',
+                          borderRadius: '6px',
+                          backgroundColor: gaugeColor
+                        }} />
+                      </div>
+                    </div>
+                  </div>
                 </div>
-              </div>
+              )}
             </div>
 
-            {/* Macro Context */}
-            <div style={{ backgroundColor: '#f9fafb', padding: '24px', borderRadius: '12px' }}>
-              <div style={{
-                display: 'flex',
-                alignItems: 'center',
-                gap: '8px',
-                marginBottom: '20px'
-              }}>
-                <span style={{ fontSize: '18px' }}>🌍</span>
-                <h2 style={{
-                  fontSize: '18px',
-                  fontWeight: '700',
-                  margin: 0,
-                  color: '#111827'
+            {/* RIGHT COLUMN: Quick Snapshot */}
+            <div>
+              {snapshotData ? (
+                <QuickSnapshot data={snapshotData} />
+              ) : (
+                <div style={{ 
+                  backgroundColor: '#f9fafb', 
+                  borderRadius: '12px', 
+                  padding: '40px', 
+                  textAlign: 'center',
+                  border: '1px dashed #e5e7eb'
                 }}>
-                  Macro Context
-                </h2>
-              </div>
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
-                {/* Interest Rates */}
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                  <span style={{ fontSize: '14px', color: '#4b5563', fontWeight: '500' }}>Interest Rates</span>
-                  <div style={{
-                    width: '32px',
-                    height: '12px',
-                    borderRadius: '6px',
-                    backgroundColor: '#f59e0b' // Neutral as default for now
-                  }} />
+                   <p style={{ color: '#6b7280' }}>Loading financial data...</p>
                 </div>
-                {/* Economic Conditions */}
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                  <span style={{ fontSize: '14px', color: '#4b5563', fontWeight: '500' }}>Economic Conditions</span>
-                  <div style={{
-                    width: '32px',
-                    height: '12px',
-                    borderRadius: '6px',
-                    backgroundColor: analysis.macroAnalysis?.summary?.toLowerCase().includes('positive') ? '#10b981' : '#f59e0b'
-                  }} />
-                </div>
-                {/* Market Sentiment */}
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                  <span style={{ fontSize: '14px', color: '#4b5563', fontWeight: '500' }}>Market Sentiment</span>
-                  <div style={{
-                    width: '32px',
-                    height: '12px',
-                    borderRadius: '6px',
-                    backgroundColor: gaugeColor
-                  }} />
-                </div>
-              </div>
+              )}
             </div>
+          
           </div>
         )}
       </div>
+
+      {/* Media Queries for Mobile Responsiveness */}
+      <style>{`
+        @media (max-width: 768px) {
+          div[style*="gridTemplateColumns: 1fr 1fr"] {
+            grid-template-columns: 1fr !important;
+          }
+        }
+      `}</style>
     </div>
   );
 };

@@ -176,3 +176,51 @@ export async function analyzeUserInput(userInput: string): Promise<DashboardResp
     throw error;
   }
 }
+
+/**
+ * Interface for Company Snapshot data
+ */
+export interface CompanySnapshot {
+  name: string;
+  code: string;
+  sector: string;
+  pe_ratio: number | null;
+  dividend_yield: number | null;
+  roe: number | null;
+  market_cap: number | null;
+  average_volume: number | null;
+  annual_report_pdfs?: string[];
+  detail_url?: string;
+}
+
+export interface SearchCompanyResponse {
+  status: string;
+  company: CompanySnapshot;
+}
+
+/**
+ * Search for a company on KLSE Screener by ticker/name.
+ */
+export async function searchCompany(ticker: string): Promise<CompanySnapshot | null> {
+  // Construct URL with query param
+  const url = `${API_BASE_URL}/company/search?company_name=${encodeURIComponent(ticker)}`;
+  console.log('[API] GET', url);
+
+  try {
+    const response = await fetch(url);
+
+    if (!response.ok) {
+      if (response.status === 404) {
+        console.warn(`[API] Company not found: ${ticker}`);
+        return null;
+      }
+      throw new Error(`API Error ${response.status}: ${await response.text()}`);
+    }
+
+    const data: SearchCompanyResponse = await response.json();
+    return data.company;
+  } catch (error) {
+    console.error('[API ERROR] searchCompany failed:', error);
+    return null;
+  }
+}

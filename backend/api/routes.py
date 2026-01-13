@@ -5,7 +5,7 @@ from schemas.preferences import Preferences
 from schemas.decision import Decision
 from schemas.company import SectorCompanies
 from schemas.company_query import CompanyQueryRequest, CompanyQueryResponse
-from agents import get_macro_signal, clear_session_store, get_klse_sector_companies, analyze_company_query, _search_company_on_klse, get_companies_by_sector_name, get_annual_report_pdfs
+from agents_utils import get_macro_signal, clear_session_store, get_klse_sector_companies, analyze_company_query, _search_company_on_klse, get_companies_by_sector_name, get_annual_report_pdfs
 from principles.principles_engine import evaluate_decision
 from utils.logger import get_all_logs, clear_logs
 

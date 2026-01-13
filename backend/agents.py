@@ -454,207 +454,31 @@ def fetch_annual_reports_for_companies(companies: List[Company]) -> List[Company
     
     return companies
 
-
-@log_agent_execution("rsi_stochastic_agent")
-def analyze_companies_rsi_stochastic(companies: List[Company]) -> List[Company]:
+@log_agent_execution("enrich_companies_with_volume_and_reports_agent")
+def enrich_companies_with_volume_and_reports(companies: List[Company]) -> List[Company]:
     """
-    Analyze companies based on RSI(14) and Stochastic(14) indicators.
-    
-    This agent accesses each company's detail_url, extracts RSI(14) and Stochastic(14) 
-    values, and determines trading action based on:
-    - RSI <= 35 AND Stochastic <= 25 → Buy
-    - RSI >= 70 AND Stochastic >= 75 → Sell
-    - Otherwise → Hold
-    
-    Args:
-        companies: List of Company objects to analyze
-        
-    Returns:
-        List of Company objects with RSI, Stochastic, and action fields populated
+    Pipeline:
+    1. Fetch Average Volume (3M)
+    2. (Optional) Filter illiquid companies
+    3. Fetch Annual Reports
     """
-    agent_logger = AgentLogger("rsi_stochastic_agent")
-    agent_logger.log_agent_start({"total_companies": len(companies)})
-    
-    print(f"[RSI_STOCHASTIC] Starting RSI/Stochastic analysis for {len(companies)} companies")
-    
-    analyzed_companies = []
-    errors = 0
-    
-    for idx, company in enumerate(companies, 1):
-        try:
-            # Skip if no detail_url
-            if not company.detail_url:
-                print(f"  [RSI_STOCHASTIC.{idx}] Skipping {company.name} ({company.code}): No detail_url")
-                company.action = "hold"  # Default to hold if no URL
-                analyzed_companies.append(company)
-                continue
-            
-            print(f"  [RSI_STOCHASTIC.{idx}] Analyzing {company.name} ({company.code})...")
-            print(f"    URL: {company.detail_url}")
-            
-            # Fetch the detail page
-            headers = {
-                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
-            }
-            response = requests.get(company.detail_url, headers=headers, timeout=10)
-            
-            if response.status_code != 200:
-                print(f"    ⚠ Failed to fetch page: HTTP {response.status_code}")
-                errors += 1
-                company.rsi = None
-                company.stochastic = None
-                company.action = "hold"  # Default to hold on error
-                analyzed_companies.append(company)
-                continue
-            
-            # Parse the HTML
-            soup = BeautifulSoup(response.content, 'lxml')
-            page_text = soup.get_text()
-            
-            # Extract RSI(14) value
-            rsi = None
-            rsi_patterns = [
-                r"RSI\(14\)[^\d]*([\d]+\.?\d*)",
-                r"RSI\s*\(14\)[^\d]*([\d]+\.?\d*)",
-                r"RSI\(14\)[:\-]?\s*([\d]+\.?\d*)",
-                r"RSI\s*14[^\d]*([\d]+\.?\d*)",
-            ]
-            
-            for pattern in rsi_patterns:
-                match = re.search(pattern, page_text, re.IGNORECASE)
-                if match:
-                    try:
-                        rsi = float(match.group(1))
-                        print(f"    ✓ Found RSI(14): {rsi}")
-                        break
-                    except ValueError:
-                        continue
-            
-            # Extract Stochastic(14) value
-            stochastic = None
-            stochastic_patterns = [
-                r"Stochastic\(14\)[^\d]*([\d]+\.?\d*)",
-                r"Stochastic\s*\(14\)[^\d]*([\d]+\.?\d*)",
-                r"Stochastic\(14\)[:\-]?\s*([\d]+\.?\d*)",
-                r"Stochastic\s*14[^\d]*([\d]+\.?\d*)",
-            ]
-            
-            for pattern in stochastic_patterns:
-                match = re.search(pattern, page_text, re.IGNORECASE)
-                if match:
-                    try:
-                        stochastic = float(match.group(1))
-                        print(f"    ✓ Found Stochastic(14): {stochastic}")
-                        break
-                    except ValueError:
-                        continue
-            
-            # Try table-based extraction if regex didn't work
-            if rsi is None or stochastic is None:
-                try:
-                    tables = soup.find_all("table")
-                    for table in tables:
-                        rows = table.find_all("tr")
-                        for row in rows:
-                            cells = row.find_all(["td", "th"])
-                            if len(cells) >= 2:
-                                cell_text = cells[0].get_text(strip=True)
-                                value_cell = cells[1].get_text(strip=True)
-                                
-                                # Look for RSI
-                                if rsi is None and "rsi" in cell_text.lower() and "14" in cell_text.lower():
-                                    value_match = re.search(r"([\d]+\.?\d*)", value_cell)
-                                    if value_match:
-                                        try:
-                                            rsi = float(value_match.group(1))
-                                            print(f"    ✓ Found RSI(14) in table: {rsi}")
-                                        except ValueError:
-                                            pass
-                                
-                                # Look for Stochastic
-                                if stochastic is None and "stochastic" in cell_text.lower() and "14" in cell_text.lower():
-                                    value_match = re.search(r"([\d]+\.?\d*)", value_cell)
-                                    if value_match:
-                                        try:
-                                            stochastic = float(value_match.group(1))
-                                            print(f"    ✓ Found Stochastic(14) in table: {stochastic}")
-                                        except ValueError:
-                                            pass
-                                
-                                if rsi is not None and stochastic is not None:
-                                    break
-                        if rsi is not None and stochastic is not None:
-                            break
-                except Exception as e:
-                    print(f"    ⚠ Error searching tables: {str(e)}")
-            
-            # Store values
-            company.rsi = rsi
-            company.stochastic = stochastic
-            
-            # Determine action based on rules
-            if rsi is not None and stochastic is not None:
-                if rsi <= 35 and stochastic <= 25:
-                    company.action = "buy"
-                    print(f"    ✓ Action: BUY (RSI={rsi} <= 35 AND Stochastic={stochastic} <= 25)")
-                elif rsi >= 70 and stochastic >= 75:
-                    company.action = "sell"
-                    print(f"    ✓ Action: SELL (RSI={rsi} >= 70 AND Stochastic={stochastic} >= 75)")
-                else:
-                    company.action = "hold"
-                    print(f"    ✓ Action: HOLD (RSI={rsi}, Stochastic={stochastic})")
-            else:
-                company.action = "hold"  # Default to hold if values not found
-                if rsi is None:
-                    print(f"    ⚠ RSI(14) not found, defaulting to hold")
-                if stochastic is None:
-                    print(f"    ⚠ Stochastic(14) not found, defaulting to hold")
-            
-            analyzed_companies.append(company)
-            
-            # Small delay to avoid overwhelming the server
-            time.sleep(0.5)
-            
-        except requests.exceptions.RequestException as e:
-            print(f"  [RSI_STOCHASTIC.{idx}] ⚠ Request error for {company.name}: {str(e)}")
-            errors += 1
-            company.rsi = None
-            company.stochastic = None
-            company.action = "hold"
-            analyzed_companies.append(company)
-        except Exception as e:
-            print(f"  [RSI_STOCHASTIC.{idx}] ⚠ Error processing {company.name}: {str(e)}")
-            errors += 1
-            company.rsi = None
-            company.stochastic = None
-            company.action = "hold"
-            analyzed_companies.append(company)
-    
-    # Count actions
-    buy_count = sum(1 for c in analyzed_companies if c.action == "buy")
-    sell_count = sum(1 for c in analyzed_companies if c.action == "sell")
-    hold_count = sum(1 for c in analyzed_companies if c.action == "hold")
-    
-    print(f"[RSI_STOCHASTIC] ✓ Analysis complete:")
-    print(f"  - Total companies: {len(analyzed_companies)}")
-    print(f"  - Buy signals: {buy_count}")
-    print(f"  - Sell signals: {sell_count}")
-    print(f"  - Hold signals: {hold_count}")
-    print(f"  - Errors: {errors}")
-    
-    agent_logger.log_agent_end(
-        input_data={"total_companies": len(companies)},
-        output_data={
-            "analyzed_count": len(analyzed_companies),
-            "buy_signals": buy_count,
-            "sell_signals": sell_count,
-            "hold_signals": hold_count,
-            "errors": errors
-        }
-    )
-    
-    return analyzed_companies
 
+    print("[PIPELINE] Step 1: Fetch Average Volume")
+    companies = fetch_average_volume_for_companies(companies)
+
+    # OPTIONAL: Liquidity filter (highly recommended)
+    MIN_AVG_VOLUME = 500_000  # example threshold
+    liquid_companies = [
+        c for c in companies
+        if c.average_volume is not None and c.average_volume >= MIN_AVG_VOLUME
+    ]
+
+    print(f"[PIPELINE] Liquidity filter: {len(liquid_companies)} / {len(companies)} passed")
+
+    print("[PIPELINE] Step 2: Fetch Annual Reports")
+    liquid_companies = fetch_annual_reports_for_companies(liquid_companies)
+
+    return liquid_companies
 
 def _get_available_model(preferred: str = "llama3.2") -> str:
     """
@@ -1467,22 +1291,23 @@ def get_companies_by_sector_name(sector: str) -> List[Company]:
         # Step 6: Filter companies by financial criteria
         if companies:
             print(f"  [STEP 6] Filtering companies by financial criteria...")
-            print(f"    - PE Ratio <= 25")
+            print(f"    - PE Ratio <= 20")
             print(f"    - Market Cap <= 200M")
-            print(f"    - ROE >= 12")
+            print(f"    - ROE >= 10")
             
             initial_count = len(companies)
             filtered_companies = []
             
             for company in companies:
                 # Check filtering criteria
-                pe_ok = company.pe_ratio is not None and company.pe_ratio <= 25
-                market_cap_ok = company.market_cap is not None and company.market_cap <= 200
-                roe_ok = company.roe is not None and company.roe >= 12
+                pe_ok = company.pe_ratio is not None and company.pe_ratio <= 20
+                market_cap_ok = company.market_cap is not None and company.market_cap >= 200
+                roe_ok = company.roe is not None and company.roe >= 10
+                dy_ok = company.dividend_yield is not None and company.dividend_yield >= 2  # Dividend Yield >= 2
                 
-                if pe_ok and market_cap_ok and roe_ok:
+                if pe_ok and market_cap_ok and roe_ok and dy_ok:
                     filtered_companies.append(company)
-                    print(f"    ✓ {company.name} ({company.code}): PE={company.pe_ratio}, Cap={company.market_cap}M, ROE={company.roe}")
+                    print(f"    ✓ {company.name} ({company.code}): PE={company.pe_ratio}, Cap={company.market_cap}M, ROE={company.roe}, DY={company.dividend_yield}%")
                 else:
                     reasons = []
                     if not pe_ok:
@@ -1491,6 +1316,8 @@ def get_companies_by_sector_name(sector: str) -> List[Company]:
                         reasons.append(f"Cap={company.market_cap}M")
                     if not roe_ok:
                         reasons.append(f"ROE={company.roe}")
+                    if not dy_ok:
+                        reasons.append(f"DY={company.dividend_yield}%")
                     print(f"    ⊗ {company.name} ({company.code}): Filtered out ({', '.join(reasons)})")
             
             companies = filtered_companies
@@ -1966,9 +1793,10 @@ def _extract_company_from_detail_page(driver, company_name: str) -> Dict:
                         # Extract various metrics
                         if "eps" in label and not company_data["eps"]:
                             company_data["eps"] = _parse_float(value)
-                        elif ("pe" in label or "p/e" in label) and "ratio" not in label.lower():
+                        elif ("p/e" in label) and "ratio" not in label.lower():
                             if not company_data["pe_ratio"]:
                                 company_data["pe_ratio"] = _parse_float(value)
+                                print(f"  ✓ Extracted pe_ratio from table: {company_data['pe_ratio']}")
                         elif label == "dy" or "dy" in label or ("dividend" in label and "yield" in label):
                             if not company_data["dividend_yield"]:
                                 company_data["dividend_yield"] = _parse_float(value)
@@ -2002,12 +1830,6 @@ def _extract_company_from_detail_page(driver, company_name: str) -> Dict:
         # Also try to extract from page text using regex
         try:
             page_text = driver.find_element(By.TAG_NAME, "body").text
-            
-            # Extract price
-            if not company_data["price"]:
-                price_match = re.search(r"Price[:\s]+([\d,]+\.?\d*)", page_text, re.IGNORECASE)
-                if price_match:
-                    company_data["price"] = _parse_float(price_match.group(1))
             
             # Extract PE ratio
             if not company_data["pe_ratio"]:

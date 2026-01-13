@@ -3,66 +3,8 @@ import { Link, useNavigate } from 'react-router-dom';
 import { useAppStore } from '../store/appStore';
 import { analyzeUserInput, searchCompany, DashboardResponse, CompanySnapshot } from '../api/dashboard';
 import QuickSnapshot from '../components/dashboard/QuickSnapshot';
-import { SignalCard } from '../components/SignalCard';
 import { NotionAI } from '../components/NotionAI';
 import { FloatingAIButton } from '../components/FloatingAIButton';
-
-
-interface CompanyInfo {
-  company_name: string | null;
-  ticker: string | null;
-  sector: string | null;
-  peers: string[];
-}
-
-interface AggregatedAnalysis {
-  ticker: string | null;
-  company_name: string | null;
-  sector: string | null;
-  overall_stance: string;
-  weighted_confidence: number;
-  signal_strength: string;
-  positive_signals: {
-    count: number;
-    signals: string[];
-  };
-  adverse_signals: {
-    count: number;
-    signals: string[];
-  };
-  trend_signals: {
-    count: number;
-    signals: string[];
-  };
-  macro_analysis: {
-    stance: string;
-    confidence: number;
-    summary: string;
-    articles_count: number;
-  };
-  micro_analysis: {
-    stance: string;
-    confidence: number;
-    summary: string;
-    articles_count: number;
-  };
-  total_articles_analyzed: number;
-  details?: any[];
-}
-
-interface PeerComparison {
-  ticker: string;
-  company_name?: string;
-  positive_percentage: number;
-  adverse_percentage: number;
-  trend_percentage: number;
-  overall_stance: string;
-}
-
-interface ComparisonData {
-  main_company: PeerComparison;
-  peers: PeerComparison[];
-}
 
 /**
  * Dashboard page showing macro and micro RAG signals.
@@ -82,17 +24,6 @@ export const DashboardPage: React.FC = () => {
   // UI States
   const [marketSignalsOpen, setMarketSignalsOpen] = useState(true);
 
-  const ticker = storeInput?.ticker;
-  const rawInputName = storeInput?.companyName; // Fallback if needed
-
-  // New state for ticker-based analysis
-  const [userInput, setUserInput] = useState('');
-  const [analyzing, setAnalyzing] = useState(false);
-  const [companyInfo, setCompanyInfo] = useState<CompanyInfo | null>(null);
-  const [analysis, setAnalysis] = useState<AggregatedAnalysis | null>(null);
-  const [comparison, setComparison] = useState<ComparisonData | null>(null);
-  const [loadingComparison, setLoadingComparison] = useState(false);
-
   // Notion AI state
   const [aiOpen, setAiOpen] = useState(false);
   const [aiContext, setAiContext] = useState<{
@@ -103,6 +34,9 @@ export const DashboardPage: React.FC = () => {
     analysis?: any;
     company_name?: string;
   } | null>(null);
+
+  const ticker = storeInput?.ticker;
+  const rawInputName = storeInput?.companyName; // Fallback if needed
 
   useEffect(() => {
     const fetchData = async () => {
@@ -119,24 +53,34 @@ export const DashboardPage: React.FC = () => {
       setSnapshotData(null);
 
       try {
+        console.log('[Dashboard] Starting fetch for ticker:', ticker);
+        
         // Parallel Fetch: Analysis (Left) + Snapshot (Right)
         const [analysisRes, snapshotRes] = await Promise.all([
           analyzeUserInput(ticker),
           searchCompany(ticker)
         ]);
 
-        console.log('[Dashboard] Analysis:', analysisRes);
-        console.log('[Dashboard] Snapshot:', snapshotRes);
+        console.log('[Dashboard] Analysis response:', analysisRes);
+        console.log('[Dashboard] Snapshot response:', snapshotRes);
+        
+        // Extract peers from multiple possible locations
+        const peersFromAnalysis = analysisRes?.companyInfo?.peers || [];
+        const peersFromSnapshot = snapshotRes?.peers || [];
+        const peers = peersFromAnalysis.length > 0 ? peersFromAnalysis : peersFromSnapshot;
+        
+        console.log('[Dashboard] Peers extracted - Analysis:', peersFromAnalysis, 'Snapshot:', peersFromSnapshot, 'Final:', peers);
 
         setDashboardData(analysisRes);
         setSnapshotData(snapshotRes);
         
         if (analysisRes.error) {
+          console.log('[Dashboard] Error in analysis:', analysisRes.error);
           setError(analysisRes.error);
         }
       } catch (err: any) {
         const msg = err instanceof Error ? err.message : 'Unknown error';
-        console.log('[Dashboard] error:', msg);
+        console.error('[Dashboard] Caught error:', msg, err);
         setError(msg);
       } finally {
         setLoading(false);
@@ -149,6 +93,20 @@ export const DashboardPage: React.FC = () => {
   // Safe extract analysis using the normalized shape
   const analysis = dashboardData?.analysis;
   const companyInfo = dashboardData?.companyInfo;
+
+  const handleOpenAI = () => {
+    // Set context from current analysis if available
+    if (analysis) {
+      setAiContext({
+        ticker: ticker || 'UNKNOWN',
+        signal: 'General market analysis',
+        signalType: 'general',
+        analysis: dashboardData?.analysis,
+        company_name: companyNameDisplay
+      });
+    }
+    setAiOpen(true);
+  };
 
   // Empty State / Redirect Prompt
   if (!ticker && !loading && !dashboardData) {
@@ -654,280 +612,32 @@ export const DashboardPage: React.FC = () => {
                    <p style={{ color: '#6b7280' }}>Loading financial data...</p>
                 </div>
               )}
+
+              {/* Compare with Peers Button */}
+              {ticker && (
+                <button
+                  onClick={() => navigate('/dashboard/compare')}
+                  style={{
+                    width: '100%',
+                    marginTop: '16px',
+                    padding: '12px 16px',
+                    backgroundColor: '#3b82f6',
+                    color: 'white',
+                    border: 'none',
+                    borderRadius: '8px',
+                    fontSize: '14px',
+                    fontWeight: '600',
+                    cursor: 'pointer',
+                    transition: 'background-color 0.2s'
+                  }}
+                  onMouseEnter={(e) => (e.currentTarget.style.backgroundColor = '#2563eb')}
+                  onMouseLeave={(e) => (e.currentTarget.style.backgroundColor = '#3b82f6')}
+                >
+                  📊 Compare with Peers
+                </button>
+              )}
             </div>
           
-          </div>
-        )}
-
-        {/* Peer Comparison Button */}
-        {analysis && !comparison && !loadingComparison && companyInfo && companyInfo.peers && companyInfo.peers.length > 0 && (
-          <div style={{
-            marginTop: '40px',
-            textAlign: 'center'
-          }}>
-            <button
-              onClick={() => {
-                if (companyInfo) {
-                  setLoadingComparison(true);
-                  fetchPeerComparison(
-                    companyInfo.company_name || '',
-                    companyInfo.ticker || '',
-                    companyInfo.peers
-                  );
-                }
-              }}
-              style={{
-                padding: '12px 24px',
-                backgroundColor: '#111827',
-                color: '#ffffff',
-                border: 'none',
-                borderRadius: '8px',
-                fontSize: '14px',
-                fontWeight: '600',
-                cursor: 'pointer',
-                boxShadow: '0 2px 4px rgba(0,0,0,0.1)',
-                transition: 'all 0.2s'
-              }}
-              onMouseEnter={(e) => {
-                e.currentTarget.style.backgroundColor = '#374151';
-                e.currentTarget.style.boxShadow = '0 4px 8px rgba(0,0,0,0.15)';
-              }}
-              onMouseLeave={(e) => {
-                e.currentTarget.style.backgroundColor = '#111827';
-                e.currentTarget.style.boxShadow = '0 2px 4px rgba(0,0,0,0.1)';
-              }}
-            >
-              📊 Compare with Peers
-            </button>
-          </div>
-        )}
-
-        {/* Peer Comparison Card */}
-        {comparison && comparison.peers.length > 0 && (
-          <div style={{
-            backgroundColor: '#ffffff',
-            borderRadius: '12px',
-            padding: '24px',
-            marginTop: '40px',
-            border: '1px solid #e5e7eb',
-            boxShadow: '0 1px 3px rgba(0, 0, 0, 0.1)'
-          }}>
-            <div style={{
-              display: 'flex',
-              alignItems: 'center',
-              gap: '8px',
-              marginBottom: '24px'
-            }}>
-              <span style={{ fontSize: '20px' }}>📊</span>
-              <h2 style={{
-                fontSize: '20px',
-                fontWeight: '600',
-                margin: 0,
-                color: '#111827'
-              }}>
-                Peer Comparison
-              </h2>
-            </div>
-
-            <div style={{
-              display: 'flex',
-              flexDirection: 'column',
-              gap: '20px'
-            }}>
-              {/* Main Company */}
-              <div style={{
-                backgroundColor: '#f9fafb',
-                borderRadius: '8px',
-                padding: '16px',
-                border: '1px solid #e5e7eb'
-              }}>
-                <div style={{
-                  display: 'flex',
-                  justifyContent: 'space-between',
-                  alignItems: 'center',
-                  marginBottom: '12px'
-                }}>
-                  <h3 style={{
-                    fontSize: '16px',
-                    fontWeight: '600',
-                    margin: 0,
-                    color: '#111827'
-                  }}>
-                    {comparison.main_company.company_name || comparison.main_company.ticker}
-                  </h3>
-                  <span style={{
-                    padding: '4px 12px',
-                    borderRadius: '12px',
-                    backgroundColor: comparison.main_company.overall_stance === 'positive' ? '#d1fae5' :
-                      comparison.main_company.overall_stance === 'negative' ? '#fee2e2' : '#fef3c7',
-                    color: comparison.main_company.overall_stance === 'positive' ? '#065f46' :
-                      comparison.main_company.overall_stance === 'negative' ? '#991b1b' : '#92400e',
-                    fontSize: '12px',
-                    fontWeight: '600'
-                  }}>
-                    {comparison.main_company.overall_stance.toUpperCase()}
-                  </span>
-                </div>
-                <div style={{
-                  display: 'flex',
-                  gap: '24px'
-                }}>
-                  <div style={{ flex: 1 }}>
-                    <div style={{
-                      fontSize: '12px',
-                      color: '#6b7280',
-                      marginBottom: '4px'
-                    }}>
-                      Positive
-                    </div>
-                    <div style={{
-                      fontSize: '20px',
-                      fontWeight: '600',
-                      color: '#10b981'
-                    }}>
-                      {comparison.main_company.positive_percentage}%
-                    </div>
-                  </div>
-                  <div style={{ flex: 1 }}>
-                    <div style={{
-                      fontSize: '12px',
-                      color: '#6b7280',
-                      marginBottom: '4px'
-                    }}>
-                      Adverse
-                    </div>
-                    <div style={{
-                      fontSize: '20px',
-                      fontWeight: '600',
-                      color: '#ef4444'
-                    }}>
-                      {comparison.main_company.adverse_percentage}%
-                    </div>
-                  </div>
-                  <div style={{ flex: 1 }}>
-                    <div style={{
-                      fontSize: '12px',
-                      color: '#6b7280',
-                      marginBottom: '4px'
-                    }}>
-                      Trend
-                    </div>
-                    <div style={{
-                      fontSize: '20px',
-                      fontWeight: '600',
-                      color: '#f59e0b'
-                    }}>
-                      {comparison.main_company.trend_percentage}%
-                    </div>
-                  </div>
-                </div>
-              </div>
-
-              {/* Peer Companies */}
-              {comparison.peers.map((peer, idx) => (
-                <div key={idx} style={{
-                  backgroundColor: '#ffffff',
-                  borderRadius: '8px',
-                  padding: '16px',
-                  border: '1px solid #e5e7eb'
-                }}>
-                  <div style={{
-                    display: 'flex',
-                    justifyContent: 'space-between',
-                    alignItems: 'center',
-                    marginBottom: '12px'
-                  }}>
-                    <h3 style={{
-                      fontSize: '16px',
-                      fontWeight: '600',
-                      margin: 0,
-                      color: '#111827'
-                    }}>
-                      {peer.company_name || peer.ticker}
-                    </h3>
-                    <span style={{
-                      padding: '4px 12px',
-                      borderRadius: '12px',
-                      backgroundColor: peer.overall_stance === 'positive' ? '#d1fae5' :
-                        peer.overall_stance === 'negative' ? '#fee2e2' : '#fef3c7',
-                      color: peer.overall_stance === 'positive' ? '#065f46' :
-                        peer.overall_stance === 'negative' ? '#991b1b' : '#92400e',
-                      fontSize: '12px',
-                      fontWeight: '600'
-                    }}>
-                      {peer.overall_stance.toUpperCase()}
-                    </span>
-                  </div>
-                  <div style={{
-                    display: 'flex',
-                    gap: '24px'
-                  }}>
-                    <div style={{ flex: 1 }}>
-                      <div style={{
-                        fontSize: '12px',
-                        color: '#6b7280',
-                        marginBottom: '4px'
-                      }}>
-                        Positive
-                      </div>
-                      <div style={{
-                        fontSize: '20px',
-                        fontWeight: '600',
-                        color: '#10b981'
-                      }}>
-                        {peer.positive_percentage}%
-                      </div>
-                    </div>
-                    <div style={{ flex: 1 }}>
-                      <div style={{
-                        fontSize: '12px',
-                        color: '#6b7280',
-                        marginBottom: '4px'
-                      }}>
-                        Adverse
-                      </div>
-                      <div style={{
-                        fontSize: '20px',
-                        fontWeight: '600',
-                        color: '#ef4444'
-                      }}>
-                        {peer.adverse_percentage}%
-                      </div>
-                    </div>
-                    <div style={{ flex: 1 }}>
-                      <div style={{
-                        fontSize: '12px',
-                        color: '#6b7280',
-                        marginBottom: '4px'
-                      }}>
-                        Trend
-                      </div>
-                      <div style={{
-                        fontSize: '20px',
-                        fontWeight: '600',
-                        color: '#f59e0b'
-                      }}>
-                        {peer.trend_percentage}%
-                      </div>
-                    </div>
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
-        )}
-
-        {loadingComparison && (
-          <div style={{
-            backgroundColor: '#ffffff',
-            borderRadius: '12px',
-            padding: '24px',
-            marginTop: '40px',
-            border: '1px solid #e5e7eb',
-            textAlign: 'center',
-            color: '#6b7280'
-          }}>
-            Comparing with peers...
           </div>
         )}
 
@@ -953,3 +663,4 @@ export const DashboardPage: React.FC = () => {
     </div>
   );
 };
+

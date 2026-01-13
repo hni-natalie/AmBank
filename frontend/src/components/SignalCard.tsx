@@ -11,7 +11,6 @@ interface SignalCardProps {
 export const SignalCard: React.FC<SignalCardProps> = ({
     signal,
     type,
-    ticker,
     severity
 }) => {
     const getBorderColor = () => {

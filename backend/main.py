@@ -1,11 +1,12 @@
 """FastAPI main application entry point."""
+from api.company_routes import company_router
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from api.routes import router
 from api.rag_routes import router as rag_router
 from api.dashboard_routes import router as dashboard_router
-from api.company_routes import router as company_router
-from api.company_routes import router as company_router
+
+
 
 app = FastAPI(
     title="Investment Decision System",
@@ -26,7 +27,6 @@ app.include_router(router, prefix="/api")
 app.include_router(rag_router, prefix="/api")
 app.include_router(dashboard_router, prefix="/api")
 app.include_router(company_router, prefix="/api")
-app.include_router(company_router, prefix="/api")
 
 
 @app.get("/")
@@ -34,3 +34,6 @@ async def root():
     """Health check endpoint."""
     return {"status": "ok", "message": "Investment Decision System API"}
 
+@app.get("/api/test")
+def test():
+    return {"message": "API prefix is working"}

@@ -263,11 +263,11 @@ export const DashboardPage: React.FC = () => {
           </div>
         )}
 
-        {/* Main Content Grid (2 Columns) */}
+        {/* Main Content Grid (2 Columns: 75% left, 25% right) */}
         {dashboardData && (
           <div style={{
             display: 'grid',
-            gridTemplateColumns: '1fr 1fr', // 2 Columns
+            gridTemplateColumns: '3fr 1fr', // 75% left, 25% right
             gap: '40px',
             alignItems: 'start'
           }}>
@@ -558,7 +558,10 @@ export const DashboardPage: React.FC = () => {
             </div>
 
             {/* RIGHT COLUMN: Quick Snapshot */}
-            <div>
+            <div style={{
+              position: 'sticky',
+              top: '16px'
+            }}>
               {snapshotData ? (
                 <QuickSnapshot data={snapshotData} />
               ) : (
@@ -581,7 +584,7 @@ export const DashboardPage: React.FC = () => {
       {/* Media Queries for Mobile Responsiveness */}
       <style>{`
         @media (max-width: 768px) {
-          div[style*="gridTemplateColumns: 1fr 1fr"] {
+          div[style*="gridTemplateColumns: 3fr 1fr"] {
             grid-template-columns: 1fr !important;
           }
         }

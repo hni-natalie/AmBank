@@ -4,6 +4,7 @@ import { LandingPage } from './components/LandingPage';
 import { GuidedChat } from './components/GuidedChat';
 import { Dashboard } from './components/Dashboard';
 import { DecisionTable } from './components/DecisionTable';
+import { SectorPeers } from './components/SectorPeers';
 import { DashboardPage } from './pages/DashboardPage';
 
 interface Decision {
@@ -16,6 +17,7 @@ interface Decision {
  * Main App component with routing.
  */
 function App() {
+  const [currentView, setCurrentView] = useState<'chat' | 'sector-peers'>('sector-peers');
   const [decision, setDecision] = useState<Decision | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -68,13 +70,13 @@ function App() {
       <Routes>
         {/* Dashboard route */}
         <Route path="/dashboard" element={<DashboardPage />} />
-        
+
         {/* Main app route */}
         <Route
           path="/"
           element={
-            <div style={{ 
-              minHeight: '100vh', 
+            <div style={{
+              minHeight: '100vh',
               backgroundColor: '#ffffff',
               display: 'flex',
               flexDirection: 'column'

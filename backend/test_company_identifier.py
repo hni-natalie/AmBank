@@ -8,11 +8,13 @@ def test_company_identification():
     identifier = CompanyIdentifier()
     
     test_cases = [
-        "I want to invest in Ambank",
-        "Buy shares of Maybank",
-        "What about CIMB?",
-        "Interested in Tenaga Nasional",
-        "Stock in Public Bank",
+        "I want to invest in WASCO",
+        "Buy shares of DELEUM",
+        "What about DAYANG?",
+        "Interested in KEYFIELD",
+        "Stock in Wasco Energy",
+        "Buy KEYFIELD shares",
+        "What about Dayang Enterprise?",
         "Random text that doesn't mention a company"
     ]
     

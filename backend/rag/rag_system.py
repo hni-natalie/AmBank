@@ -12,7 +12,9 @@ class RAGSystem:
         self,
         embedding_model: str = "all-MiniLM-L6-v2",
         ollama_url: str = "http://localhost:11434",
-        llm_model: str = "llama3.1:8b"
+        llm_model: str = "llama3.1:8b",
+        persist: bool = False,
+        db_path: Optional[str] = None
     ):
         """
         Initialize RAG system.
@@ -21,10 +23,14 @@ class RAGSystem:
             embedding_model: Sentence transformer model name for embeddings
             ollama_url: Ollama API base URL
             llm_model: LLM model name
+            persist: Whether to persist vector database to disk
+            db_path: Path to store vector database (required if persist=True)
         """
-        self.vector_store = VectorStore()
+        self.vector_store = VectorStore(persist=persist, db_path=db_path)
         self.embedding_model = EmbeddingModel(embedding_model)
         self.llm_client = OllamaClient(ollama_url, llm_model)
+        self.persist = persist
+        self.db_path = db_path
     
     def add_documents(self, documents: Union[str, List[str]], metadata: Optional[List[Dict]] = None):
         """
@@ -190,7 +196,17 @@ class RAGSystem:
         
         if not results:
             # No documents found at all
-            answer = self.llm_client.generate(query, **llm_kwargs)
+            # Extract temperature and top_p from llm_kwargs if provided
+            llm_options = {}
+            if 'temperature' in llm_kwargs:
+                llm_options['temperature'] = llm_kwargs.pop('temperature')
+            if 'top_p' in llm_kwargs:
+                llm_options['top_p'] = llm_kwargs.pop('top_p')
+            answer = self.llm_client.generate(
+                query,
+                options=llm_options if llm_options else None,
+                **llm_kwargs
+            )
             return {
                 'answer': answer,
                 'context': [],
@@ -213,7 +229,20 @@ class RAGSystem:
         
         if not context_texts:
             # No valid context texts
-            answer = self.llm_client.generate(query, **llm_kwargs)
+            # Extract temperature, top_p, and seed from llm_kwargs if provided
+            llm_options = {}
+            temp_kwargs = llm_kwargs.copy()
+            if 'temperature' in temp_kwargs:
+                llm_options['temperature'] = temp_kwargs.pop('temperature')
+            if 'top_p' in temp_kwargs:
+                llm_options['top_p'] = temp_kwargs.pop('top_p')
+            if 'seed' in temp_kwargs:
+                llm_options['seed'] = temp_kwargs.pop('seed')
+            answer = self.llm_client.generate(
+                query,
+                options=llm_options if llm_options else None,
+                **temp_kwargs
+            )
             return {
                 'answer': answer,
                 'context': [],
@@ -228,12 +257,31 @@ class RAGSystem:
             # Truncate context but keep it meaningful
             context = context[:max_context_length] + "\n\n[Context truncated...]"
         
-        # Generate answer with context
+        # Generate answer with context and deterministic settings
+        # Extract temperature, top_p, and seed from llm_kwargs if provided
+        llm_options = {}
+        temp_kwargs = llm_kwargs.copy()
+        if 'temperature' in temp_kwargs:
+            llm_options['temperature'] = temp_kwargs.pop('temperature')
+        if 'top_p' in temp_kwargs:
+            llm_options['top_p'] = temp_kwargs.pop('top_p')
+        if 'seed' in temp_kwargs:
+            llm_options['seed'] = temp_kwargs.pop('seed')
+        
         try:
             if include_context:
-                answer = self.llm_client.generate(query, context=context, **llm_kwargs)
+                answer = self.llm_client.generate(
+                    query, 
+                    context=context,
+                    options=llm_options if llm_options else None,
+                    **temp_kwargs
+                )
             else:
-                answer = self.llm_client.generate(query, **llm_kwargs)
+                answer = self.llm_client.generate(
+                    query,
+                    options=llm_options if llm_options else None,
+                    **temp_kwargs
+                )
         except Exception as e:
             # Fallback if LLM generation fails
             return {

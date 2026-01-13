@@ -91,66 +91,29 @@ class KLSEScraper:
     def _normalize_ticker(self, company_name: str) -> Optional[str]:
         """
         Try to normalize company name to ticker format.
+        Only supports energy companies: WASCO, DELEUM, DAYANG, KEYFIELD.
         
         Args:
             company_name: Company name
             
         Returns:
-            Ticker in format like "AMBANK.KL" or None
+            Ticker in format like "WASCO.KL" or None
         """
-        # Common company name to ticker mappings (expanded list)
+        # Energy company name to ticker mappings (only these 4 companies)
         name_to_ticker = {
-            'ambank': 'AMBANK',
-            'am bank': 'AMBANK',
-            'a m bank': 'AMBANK',
-            'a.m. bank': 'AMBANK',
-            'maybank': 'MAYBANK',
-            'malayan banking': 'MAYBANK',
-            'cimb': 'CIMB',
-            'cimb bank': 'CIMB',
-            'cimb group': 'CIMB',
-            'public bank': 'PUBLIC',
-            'public bank berhad': 'PUBLIC',
-            'rhb': 'RHBBANK',
-            'rhb bank': 'RHBBANK',
-            'hong leong': 'HLBANK',
-            'hong leong bank': 'HLBANK',
-            'tenaga': 'TENAGA',
-            'tenaga nasional': 'TENAGA',
-            'tnb': 'TENAGA',
-            'petronas': 'PETGAS',
-            'petronas gas': 'PETGAS',
-            'petgas': 'PETGAS',
-            'sime darby': 'SIME',
-            'sime': 'SIME',
-            'ioi': 'IOICORP',
-            'ioi corp': 'IOICORP',
-            'ioi corporation': 'IOICORP',
-            'genting': 'GENTING',
-            'genting berhad': 'GENTING',
-            'maxis': 'MAXIS',
-            'maxis berhad': 'MAXIS',
-            'digi': 'DIGI',
-            'digi.com': 'DIGI',
-            'axiata': 'AXIATA',
-            'telekom': 'TM',
-            'telekom malaysia': 'TM',
-            'tm': 'TM',
-            'sunway': 'SUNWAY',
-            'sunway berhad': 'SUNWAY',
-            'gamuda': 'GAMUDA',
-            'gamuda berhad': 'GAMUDA',
-            'ijm': 'IJM',
-            'ijm corp': 'IJM',
-            'ijm corporation': 'IJM',
-            'yinson': 'YINSON',
-            'yinson holdings': 'YINSON',
-            'top glove': 'TOPGLOV',
-            'topglove': 'TOPGLOV',
-            'supermax': 'SUPERMX',
-            'supermax corporation': 'SUPERMX',
-            'hartalega': 'HARTA',
-            'hartalega holdings': 'HARTA'
+            'wasco': 'WASCO',
+            'wasco energy': 'WASCO',
+            'wasco energy group': 'WASCO',
+            'deleum': 'DELEUM',
+            'deleum berhad': 'DELEUM',
+            'deleum group': 'DELEUM',
+            'dayang': 'DAYANG',
+            'dayang enterprise': 'DAYANG',
+            'dayang enterprise holdings': 'DAYANG',
+            'dayang holdings': 'DAYANG',
+            'keyfield': 'KEYFIELD',
+            'keyfield berhad': 'KEYFIELD',
+            'keyfield group': 'KEYFIELD'
         }
         
         name_lower = company_name.lower().strip()
@@ -168,6 +131,10 @@ class KLSEScraper:
         for key, ticker in name_to_ticker.items():
             if name_lower in key:
                 return f"{ticker}.KL"
+        
+        # Check for exact ticker match
+        if name_lower in ['wasco', 'deleum', 'dayang', 'keyfield']:
+            return f"{name_lower.upper()}.KL"
         
         return None
     
@@ -269,45 +236,22 @@ class KLSEScraper:
     def _get_sector_from_ticker(self, ticker: str) -> Optional[str]:
         """
         Get sector from ticker using known mappings.
+        All supported companies are in the Energy sector.
         
         Args:
-            ticker: Stock ticker (e.g., "AMBANK.KL")
+            ticker: Stock ticker (e.g., "WASCO.KL")
             
         Returns:
-            Sector name or None
+            Sector name (always "Energy" for supported companies) or None
         """
         ticker_code = ticker.replace('.KL', '').upper()
         
-        # Ticker to sector mapping
+        # Ticker to sector mapping (only energy companies)
         ticker_to_sector = {
-            # Banking
-            'AMBANK': 'Banking',
-            'MAYBANK': 'Banking',
-            'CIMB': 'Banking',
-            'PUBLIC': 'Banking',
-            'RHBBANK': 'Banking',
-            'HLBANK': 'Banking',
-            # Technology/Telecom
-            'MAXIS': 'Telecommunications',
-            'DIGI': 'Telecommunications',
-            'AXIATA': 'Telecommunications',
-            'TM': 'Telecommunications',
-            # Energy/Utilities
-            'TENAGA': 'Utilities',
-            'PETGAS': 'Energy',
-            # Construction
-            'GAMUDA': 'Construction',
-            'IJM': 'Construction',
-            'SUNWAY': 'Construction',
-            # Plantation
-            'IOICORP': 'Plantation',
-            'SIME': 'Plantation',
-            # Others
-            'GENTING': 'Gaming & Hospitality',
-            'YINSON': 'Energy',
-            'TOPGLOV': 'Healthcare',
-            'SUPERMX': 'Healthcare',
-            'HARTA': 'Healthcare'
+            'WASCO': 'Energy',
+            'DELEUM': 'Energy',
+            'DAYANG': 'Energy',
+            'KEYFIELD': 'Energy'
         }
         
         return ticker_to_sector.get(ticker_code)
@@ -337,36 +281,32 @@ class KLSEScraper:
     def get_peers_by_sector(self, sector: str, exclude_company: str = None) -> List[str]:
         """
         Get peer companies in the same sector.
+        Only returns energy sector peers: WASCO, DELEUM, DAYANG, KEYFIELD.
         
         Args:
-            sector: Sector name
+            sector: Sector name (should be "Energy")
             exclude_company: Company name to exclude from results
             
         Returns:
             List of peer company names
         """
-        # Common sector peers mapping (stub - would need actual KLSE API)
-        sector_peers = {
-            'banking': ['Maybank', 'CIMB', 'Public Bank', 'RHB Bank', 'Hong Leong Bank'],
-            'finance': ['Maybank', 'CIMB', 'Public Bank', 'Ambank', 'RHB Bank'],
-            'technology': ['Maxis', 'Digi', 'Axiata', 'Telekom Malaysia'],
-            'telecommunications': ['Maxis', 'Digi', 'Axiata', 'Telekom Malaysia'],
-            'energy': ['Petronas Gas', 'Petronas Chemicals', 'Tenaga Nasional'],
-            'utilities': ['Tenaga Nasional', 'YTL Power', 'Malakoff'],
-            'construction': ['Gamuda', 'IJM Corp', 'Sunway', 'WCT Holdings'],
-            'property': ['Sunway', 'IOI Properties', 'SP Setia', 'UEM Sunrise'],
-            'plantation': ['IOI Corp', 'Sime Darby Plantation', 'KLK', 'FGV'],
-            'healthcare': ['IHH Healthcare', 'KPJ Healthcare', 'Pharmaniaga']
-        }
+        # Energy sector peers (only these 4 companies)
+        energy_peers = ['WASCO', 'DELEUM', 'DAYANG', 'KEYFIELD']
         
         sector_lower = sector.lower() if sector else ''
         
-        # Find matching sector
-        for key, peers in sector_peers.items():
-            if key in sector_lower or sector_lower in key:
-                # Filter out excluded company
-                if exclude_company:
-                    peers = [p for p in peers if p.lower() != exclude_company.lower()]
-                return peers[:3]
+        # Only return peers if sector is energy-related
+        if 'energy' in sector_lower or 'oil' in sector_lower or 'gas' in sector_lower:
+            # Filter out excluded company
+            if exclude_company:
+                exclude_ticker = self._normalize_ticker(exclude_company)
+                if exclude_ticker:
+                    exclude_code = exclude_ticker.replace('.KL', '').upper()
+                    peers = [p for p in energy_peers if p != exclude_code]
+                else:
+                    peers = [p for p in energy_peers if p.lower() != exclude_company.lower()]
+            else:
+                peers = energy_peers
+            return peers[:3]
         
         return []

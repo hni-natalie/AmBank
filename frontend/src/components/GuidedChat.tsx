@@ -10,7 +10,7 @@ interface GuidedChatProps {
 
 const timeHorizons = ['short', 'medium', 'long'];
 const riskLevels = ['conservative', 'balanced', 'aggressive'];
-const availableSectors = ['technology', 'finance', 'healthcare', 'energy', 'consumer', 'industrial'];
+const availableSectors = ['energy']; // Only energy sector supported
 
 /**
  * GuidedChat component - collects user preferences with pill selections.

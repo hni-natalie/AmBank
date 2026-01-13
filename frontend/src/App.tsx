@@ -22,8 +22,7 @@ function App() {
       <Route path="/news" element={<NewsPage />} />
       <Route path="/companies" element={<CompaniesPage />} />
       <Route path="/final" element={<FinalListPage />} />
+      <Route path="/dashboard" element={<DashboardPage />} />
     </Routes>
-  );
-}
-
+  )}
 export default App;

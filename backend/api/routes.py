@@ -36,4 +36,3 @@ async def clear_session():
     """Clear session data (vectors, temporary data)."""
     clear_session_store()
     return {"status": "cleared"}
-

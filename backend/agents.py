@@ -191,6 +191,22 @@ SECTOR_MAPPING = {
     "reit": "Real Estate Investment Trusts"
 }
 
+SECTOR_STYLE = {
+    "Technology": "Growth",
+    "Health Care": "Growth",
+    "Telecommunications & Media": "Growth",
+    "Transportation & Logistics": "Growth",
+    "Financial Services": "Value",
+    "Utilities": "Value",
+    "Real Estate Investment Trusts": "Value",
+    "Energy": "Value",
+    "Plantation": "Value",
+    "Property": "Value",
+    "Consumer Products & Services": "Blend",
+    "Industrial Products & Services": "Blend",
+    "Construction": "Blend"
+}
+
 
 @log_agent_execution("klse_sector_agent")
 def get_klse_sector_companies(sector: str) -> SectorCompanies:
@@ -228,6 +244,10 @@ def get_klse_sector_companies(sector: str) -> SectorCompanies:
     print(f"[STEP 2] ✓ Sector mapped: '{sector}' → '{klse_sector}'")
     agent_logger.info("Sector mapped", input_data={"sector": sector, "klse_sector": klse_sector})
     
+    # Determine investment style based on sector
+    style = SECTOR_STYLE.get(klse_sector, "Blend")  # Default to Blend if not found
+    print(f"[STEP 2.1] Determined investment style: '{style}' for sector '{klse_sector}'")
+    
     try:
         # KLSE Screener base URL
         base_url = "https://www.klsescreener.com/v2/"
@@ -235,7 +255,7 @@ def get_klse_sector_companies(sector: str) -> SectorCompanies:
         
         # Try to fetch data using requests first (faster if data is available)
         print(f"[STEP 4] Attempting to fetch via API/HTML parsing...")
-        companies = _fetch_companies_via_api(base_url, klse_sector, sector)
+        companies = _fetch_companies_via_api(base_url, klse_sector, sector, style)
         
         if not companies:
             # Fallback: Use Selenium for JavaScript-rendered content
@@ -243,7 +263,7 @@ def get_klse_sector_companies(sector: str) -> SectorCompanies:
             print(f"[STEP 5.1] Note: Selenium requires ChromeDriver. If it fails, check ChromeDriver installation.")
             logger.info("Attempting to fetch via Selenium...")
             try:
-                companies = _fetch_companies_via_selenium(base_url, klse_sector, sector)
+                companies = _fetch_companies_via_selenium(base_url, klse_sector, sector, style)
                 if companies:
                     print(f"[STEP 5.2] ✓ Successfully fetched {len(companies)} companies via Selenium")
                 else:
@@ -286,7 +306,7 @@ def get_klse_sector_companies(sector: str) -> SectorCompanies:
         )
 
 
-def _fetch_companies_via_api(base_url: str, klse_sector: str, sector: str) -> List[Company]:
+def _fetch_companies_via_api(base_url: str, klse_sector: str, sector: str, style: str) -> List[Company]:
     """
     Attempt to fetch companies via API or static HTML parsing.
     
@@ -346,7 +366,7 @@ def _fetch_companies_via_api(base_url: str, klse_sector: str, sector: str) -> Li
             # Parse HTML to extract company data
             # This is a placeholder - actual parsing logic depends on KLSE Screener's HTML structure
             print(f"  [4.5] Extracting company data from HTML...")
-            companies = _parse_company_table(soup, klse_sector)
+            companies = _parse_company_table(soup, klse_sector, style)
             print(f"  [4.6] Extracted {len(companies)} companies from HTML")
             
             # If no companies found, try to find any table structure for debugging
@@ -368,7 +388,7 @@ def _fetch_companies_via_api(base_url: str, klse_sector: str, sector: str) -> Li
     return companies
 
 
-def _fetch_companies_via_selenium(base_url: str, klse_sector: str, sector: str) -> List[Company]:
+def _fetch_companies_via_selenium(base_url: str, klse_sector: str, sector: str, style: str) -> List[Company]:
     """
     Fetch companies using Selenium for JavaScript-rendered content.
     
@@ -508,6 +528,346 @@ def _fetch_companies_via_selenium(base_url: str, klse_sector: str, sector: str) 
                 print(f"  [5.11] Waiting for sector selection to register...")
                 time.sleep(1)
                 
+                # Determine investment style based on sector
+                style = SECTOR_STYLE.get(klse_sector, "Blend")  # Default to Blend if not found
+                print(f"  [5.11.0] Determined investment style: '{style}' for sector '{klse_sector}'")
+                
+                # Define filter values based on style
+                filter_values = {
+                    "Value": {
+                        "pe_max": "20",
+                        "market_cap": "200",
+                        "ptbv_max": "3",
+                        "dy_min": "2",
+                        "roe_min": "10"
+                    },
+                    "Growth": {
+                        "pe_max": "25",
+                        "market_cap": "200",
+                        "roe_min": "12"
+                    },
+                    "Blend": {
+                        "pe_max": "20",
+                        "market_cap": "200",
+                        "roe_min": "10"
+                    }
+                }
+                filters = filter_values.get(style, filter_values["Blend"])
+                print(f"  [5.11.0.1] Filter values for {style} style: {filters}")
+                
+                # Fill in Market Cap (M) field
+                print(f"  [5.11.1] Looking for Market Cap (M) input field...")
+                market_cap_input = None
+                market_cap_selectors = [
+                    (By.NAME, "market_cap"),
+                    (By.ID, "market_cap"),
+                    (By.XPATH, "//input[contains(@placeholder, 'Market Cap') or contains(@name, 'market') or contains(@id, 'market')]"),
+                    (By.XPATH, "//input[@type='text' or @type='number']"),  # Fallback: find any text/number input
+                ]
+                
+                for selector_type, selector_value in market_cap_selectors:
+                    try:
+                        print(f"  [5.11.2] Trying Market Cap selector: {selector_type} = '{selector_value}'")
+                        inputs = driver.find_elements(selector_type, selector_value)
+                        # If we get multiple inputs, try to find the one that looks like Market Cap
+                        for inp in inputs:
+                            inp_name = inp.get_attribute("name") or ""
+                            inp_id = inp.get_attribute("id") or ""
+                            inp_placeholder = inp.get_attribute("placeholder") or ""
+                            # Check if it's likely the Market Cap field
+                            if any(term in (inp_name + inp_id + inp_placeholder).lower() for term in ["market", "cap", "mcap"]):
+                                market_cap_input = inp
+                                print(f"  [5.11.3] ✓ Found Market Cap input using: {selector_type} = '{selector_value}'")
+                                break
+                        if market_cap_input:
+                            break
+                    except Exception as e:
+                        continue
+                
+                # If not found with specific selectors, try finding by label text
+                if not market_cap_input:
+                    try:
+                        print(f"  [5.11.4] Trying to find Market Cap by label text...")
+                        # Look for label containing "Market Cap" and find associated input
+                        labels = driver.find_elements(By.XPATH, "//label[contains(text(), 'Market Cap')]")
+                        for label in labels:
+                            label_for = label.get_attribute("for")
+                            if label_for:
+                                market_cap_input = driver.find_element(By.ID, label_for)
+                                print(f"  [5.11.5] ✓ Found Market Cap input via label (for='{label_for}')")
+                                break
+                            # If no 'for' attribute, try finding input nearby
+                            parent = label.find_element(By.XPATH, "./..")
+                            market_cap_input = parent.find_element(By.TAG_NAME, "input")
+                            if market_cap_input:
+                                print(f"  [5.11.6] ✓ Found Market Cap input near label")
+                                break
+                    except:
+                        pass
+                
+                if market_cap_input:
+                    try:
+                        print(f"  [5.11.7] Clearing Market Cap field...")
+                        market_cap_input.clear()
+                        print(f"  [5.11.8] Entering '{filters['market_cap']}' in Market Cap (M) field...")
+                        market_cap_input.send_keys(filters['market_cap'])
+                        print(f"  [5.11.9] ✓ Market Cap (M) field filled with '{filters['market_cap']}'")
+                        time.sleep(0.5)  # Brief wait for value to register
+                    except Exception as e:
+                        print(f"  [5.11.10] ⚠ Failed to fill Market Cap field: {str(e)}")
+                else:
+                    print(f"  [5.11.11] ⚠ Market Cap (M) input field not found, continuing without setting it...")
+                
+                # Fill in PE max field (second box in PE row) with 20
+                print(f"  [5.11.12] Looking for PE (Price-to-Earnings) max input field (second box in PE row)...")
+                pe_max_input = None
+                
+                # Strategy 1: Find PE row/container and get the second input (max)
+                try:
+                    print(f"  [5.11.13] Trying to find PE row/container...")
+                    # Look for label or text containing "PE" or "P/E"
+                    pe_labels = driver.find_elements(By.XPATH, "//label[contains(text(), 'PE') or contains(text(), 'P/E')]")
+                    pe_texts = driver.find_elements(By.XPATH, "//*[contains(text(), 'PE') or contains(text(), 'P/E')]")
+                    
+                    for pe_element in list(pe_labels) + list(pe_texts):
+                        try:
+                            # Get the parent container (form-group, row, or similar)
+                            parent = pe_element.find_element(By.XPATH, "./ancestor::*[contains(@class, 'form') or contains(@class, 'row') or contains(@class, 'group') or contains(@class, 'field')][1]")
+                            # Find all input elements in this container
+                            inputs = parent.find_elements(By.TAG_NAME, "input")
+                            text_inputs = [inp for inp in inputs if inp.get_attribute("type") in ["text", "number", None] or inp.get_attribute("type") == ""]
+                            
+                            if len(text_inputs) >= 2:
+                                # Second input should be the max field
+                                pe_max_input = text_inputs[1]  # Index 1 is the second input
+                                print(f"  [5.11.14] ✓ Found PE max input (second input in PE row) via PE element")
+                                # Verify it's likely the max field
+                                inp_name = pe_max_input.get_attribute("name") or ""
+                                inp_id = pe_max_input.get_attribute("id") or ""
+                                if "max" in (inp_name + inp_id).lower():
+                                    print(f"  [5.11.15] ✓ Confirmed: PE max field (name='{inp_name}', id='{inp_id}')")
+                                    break
+                        except:
+                            continue
+                    
+                    # Strategy 2: If not found, try direct selectors for PE max
+                    if not pe_max_input:
+                        print(f"  [5.11.16] Trying direct selectors for PE max field...")
+                        pe_max_selectors = [
+                            (By.NAME, "pe_max"),
+                            (By.ID, "pe_max"),
+                            (By.NAME, "pe[max]"),
+                            (By.ID, "pe[max]"),
+                            (By.XPATH, "//input[contains(@name, 'pe') and contains(@name, 'max')]"),
+                            (By.XPATH, "//input[contains(@id, 'pe') and contains(@id, 'max')]"),
+                        ]
+                        
+                        for selector_type, selector_value in pe_max_selectors:
+                            try:
+                                inputs = driver.find_elements(selector_type, selector_value)
+                                if inputs:
+                                    pe_max_input = inputs[0]
+                                    print(f"  [5.11.17] ✓ Found PE max input using: {selector_type} = '{selector_value}'")
+                                    break
+                            except:
+                                continue
+                    
+                    # Strategy 3: Find all inputs with "pe" in name/id and identify max by position
+                    if not pe_max_input:
+                        try:
+                            print(f"  [5.11.18] Trying alternative: finding all PE-related inputs...")
+                            all_inputs = driver.find_elements(By.TAG_NAME, "input")
+                            pe_inputs = []
+                            for inp in all_inputs:
+                                inp_name = inp.get_attribute("name") or ""
+                                inp_id = inp.get_attribute("id") or ""
+                                inp_type = inp.get_attribute("type") or ""
+                                if inp_type in ["text", "number", None, ""] and "pe" in (inp_name + inp_id).lower():
+                                    pe_inputs.append(inp)
+                            
+                            if len(pe_inputs) >= 2:
+                                # Second one should be max
+                                pe_max_input = pe_inputs[1]
+                                print(f"  [5.11.19] ✓ Found PE max input (second PE input found)")
+                        except:
+                            pass
+                    
+                except Exception as e:
+                    print(f"  [5.11.20] ⚠ Error searching for PE max field: {str(e)}")
+                
+                if pe_max_input:
+                    try:
+                        print(f"  [5.11.21] Clearing PE max field...")
+                        pe_max_input.clear()
+                        print(f"  [5.11.22] Entering '{filters['pe_max']}' in PE max field...")
+                        pe_max_input.send_keys(filters['pe_max'])
+                        print(f"  [5.11.23] ✓ PE max field filled with '{filters['pe_max']}'")
+                        time.sleep(0.5)  # Brief wait for value to register
+                    except Exception as e:
+                        print(f"  [5.11.24] ⚠ Failed to fill PE max field: {str(e)}")
+                else:
+                    print(f"  [5.11.25] ⚠ PE max input field not found, continuing without setting it...")
+                
+                # Fill in ROE min field (first box in ROE row) with 12
+                print(f"  [5.11.26] Looking for ROE (Return on Equity) min input field (first box in ROE row)...")
+                roe_min_input = None
+                
+                # Strategy 1: Find ROE row/container and get the first input (min)
+                try:
+                    print(f"  [5.11.27] Trying to find ROE row/container...")
+                    # Look for label or text containing "ROE"
+                    roe_labels = driver.find_elements(By.XPATH, "//label[contains(text(), 'ROE')]")
+                    roe_texts = driver.find_elements(By.XPATH, "//*[contains(text(), 'ROE')]")
+                    
+                    for roe_element in list(roe_labels) + list(roe_texts):
+                        try:
+                            # Get the parent container (form-group, row, or similar)
+                            parent = roe_element.find_element(By.XPATH, "./ancestor::*[contains(@class, 'form') or contains(@class, 'row') or contains(@class, 'group') or contains(@class, 'field')][1]")
+                            # Find all input elements in this container
+                            inputs = parent.find_elements(By.TAG_NAME, "input")
+                            text_inputs = [inp for inp in inputs if inp.get_attribute("type") in ["text", "number", None] or inp.get_attribute("type") == ""]
+                            
+                            if len(text_inputs) >= 1:
+                                # First input should be the min field
+                                roe_min_input = text_inputs[0]  # Index 0 is the first input
+                                print(f"  [5.11.28] ✓ Found ROE min input (first input in ROE row) via ROE element")
+                                # Verify it's likely the min field
+                                inp_name = roe_min_input.get_attribute("name") or ""
+                                inp_id = roe_min_input.get_attribute("id") or ""
+                                if "min" in (inp_name + inp_id).lower() or len(text_inputs) >= 1:
+                                    print(f"  [5.11.29] ✓ Confirmed: ROE min field (name='{inp_name}', id='{inp_id}')")
+                                    break
+                        except:
+                            continue
+                    
+                    # Strategy 2: If not found, try direct selectors for ROE min
+                    if not roe_min_input:
+                        print(f"  [5.11.30] Trying direct selectors for ROE min field...")
+                        roe_min_selectors = [
+                            (By.NAME, "roe_min"),
+                            (By.ID, "roe_min"),
+                            (By.NAME, "roe[min]"),
+                            (By.ID, "roe[min]"),
+                            (By.XPATH, "//input[contains(@name, 'roe') and contains(@name, 'min')]"),
+                            (By.XPATH, "//input[contains(@id, 'roe') and contains(@id, 'min')]"),
+                        ]
+                        
+                        for selector_type, selector_value in roe_min_selectors:
+                            try:
+                                inputs = driver.find_elements(selector_type, selector_value)
+                                if inputs:
+                                    roe_min_input = inputs[0]
+                                    print(f"  [5.11.31] ✓ Found ROE min input using: {selector_type} = '{selector_value}'")
+                                    break
+                            except:
+                                continue
+                    
+                    # Strategy 3: Find all inputs with "roe" in name/id and identify min by position
+                    if not roe_min_input:
+                        try:
+                            print(f"  [5.11.32] Trying alternative: finding all ROE-related inputs...")
+                            all_inputs = driver.find_elements(By.TAG_NAME, "input")
+                            roe_inputs = []
+                            for inp in all_inputs:
+                                inp_name = inp.get_attribute("name") or ""
+                                inp_id = inp.get_attribute("id") or ""
+                                inp_type = inp.get_attribute("type") or ""
+                                if inp_type in ["text", "number", None, ""] and "roe" in (inp_name + inp_id).lower():
+                                    roe_inputs.append(inp)
+                            
+                            if len(roe_inputs) >= 1:
+                                # First one should be min
+                                roe_min_input = roe_inputs[0]
+                                print(f"  [5.11.33] ✓ Found ROE min input (first ROE input found)")
+                        except:
+                            pass
+                    
+                except Exception as e:
+                    print(f"  [5.11.34] ⚠ Error searching for ROE min field: {str(e)}")
+                
+                if roe_min_input:
+                    try:
+                        print(f"  [5.11.35] Clearing ROE min field...")
+                        roe_min_input.clear()
+                        print(f"  [5.11.36] Entering '{filters['roe_min']}' in ROE min field...")
+                        roe_min_input.send_keys(filters['roe_min'])
+                        print(f"  [5.11.37] ✓ ROE min field filled with '{filters['roe_min']}'")
+                        time.sleep(0.5)  # Brief wait for value to register
+                    except Exception as e:
+                        print(f"  [5.11.38] ⚠ Failed to fill ROE min field: {str(e)}")
+                else:
+                    print(f"  [5.11.39] ⚠ ROE min input field not found, continuing without setting it...")
+                
+                # Fill PTBV max and DY min for Value style
+                if style == "Value":
+                    # Fill PTBV max field
+                    print(f"  [5.11.40] Looking for PTBV (Price-to-Book Value) max input field...")
+                    ptbv_max_input = None
+                    try:
+                        ptbv_labels = driver.find_elements(By.XPATH, "//label[contains(text(), 'PTBV') or contains(text(), 'P/B')]")
+                        ptbv_texts = driver.find_elements(By.XPATH, "//*[contains(text(), 'PTBV') or contains(text(), 'P/B')]")
+                        
+                        for ptbv_element in list(ptbv_labels) + list(ptbv_texts):
+                            try:
+                                parent = ptbv_element.find_element(By.XPATH, "./ancestor::*[contains(@class, 'form') or contains(@class, 'row') or contains(@class, 'group') or contains(@class, 'field')][1]")
+                                inputs = parent.find_elements(By.TAG_NAME, "input")
+                                text_inputs = [inp for inp in inputs if inp.get_attribute("type") in ["text", "number", None] or inp.get_attribute("type") == ""]
+                                
+                                if len(text_inputs) >= 2:
+                                    ptbv_max_input = text_inputs[1]  # Second input is max
+                                    print(f"  [5.11.41] ✓ Found PTBV max input")
+                                    break
+                            except:
+                                continue
+                        
+                        if ptbv_max_input:
+                            try:
+                                ptbv_max_input.clear()
+                                print(f"  [5.11.42] Entering '{filters['ptbv_max']}' in PTBV max field...")
+                                ptbv_max_input.send_keys(filters['ptbv_max'])
+                                print(f"  [5.11.43] ✓ PTBV max field filled with '{filters['ptbv_max']}'")
+                                time.sleep(0.5)
+                            except Exception as e:
+                                print(f"  [5.11.44] ⚠ Failed to fill PTBV max field: {str(e)}")
+                        else:
+                            print(f"  [5.11.45] ⚠ PTBV max input field not found, continuing...")
+                    except Exception as e:
+                        print(f"  [5.11.46] ⚠ Error searching for PTBV max field: {str(e)}")
+                    
+                    # Fill DY min field
+                    print(f"  [5.11.47] Looking for DY (Dividend Yield) min input field...")
+                    dy_min_input = None
+                    try:
+                        dy_labels = driver.find_elements(By.XPATH, "//label[contains(text(), 'DY') or contains(text(), 'Dividend Yield')]")
+                        dy_texts = driver.find_elements(By.XPATH, "//*[contains(text(), 'DY') or contains(text(), 'Dividend Yield')]")
+                        
+                        for dy_element in list(dy_labels) + list(dy_texts):
+                            try:
+                                parent = dy_element.find_element(By.XPATH, "./ancestor::*[contains(@class, 'form') or contains(@class, 'row') or contains(@class, 'group') or contains(@class, 'field')][1]")
+                                inputs = parent.find_elements(By.TAG_NAME, "input")
+                                text_inputs = [inp for inp in inputs if inp.get_attribute("type") in ["text", "number", None] or inp.get_attribute("type") == ""]
+                                
+                                if len(text_inputs) >= 1:
+                                    dy_min_input = text_inputs[0]  # First input is min
+                                    print(f"  [5.11.48] ✓ Found DY min input")
+                                    break
+                            except:
+                                continue
+                        
+                        if dy_min_input:
+                            try:
+                                dy_min_input.clear()
+                                print(f"  [5.11.49] Entering '{filters['dy_min']}' in DY min field...")
+                                dy_min_input.send_keys(filters['dy_min'])
+                                print(f"  [5.11.50] ✓ DY min field filled with '{filters['dy_min']}'")
+                                time.sleep(0.5)
+                            except Exception as e:
+                                print(f"  [5.11.51] ⚠ Failed to fill DY min field: {str(e)}")
+                        else:
+                            print(f"  [5.11.52] ⚠ DY min input field not found, continuing...")
+                    except Exception as e:
+                        print(f"  [5.11.53] ⚠ Error searching for DY min field: {str(e)}")
+                
                 # Look for and click the "Screen" button to apply the filter
                 print(f"  [5.12] Looking for 'Screen' button to apply filter...")
                 screen_button = None
@@ -603,7 +963,7 @@ def _fetch_companies_via_selenium(base_url: str, klse_sector: str, sector: str) 
                 print(f"  [5.16] Extracting company data from table...")
                 print(f"  [5.16.1] Using sector parameter: '{sector}' (klse_sector: '{klse_sector}')")
                 # Extract company data from the table - pass the original sector input
-                companies = _extract_companies_from_table(driver, sector)
+                companies = _extract_companies_from_table(driver, sector, style)
                 print(f"  [5.17] ✓ Extracted {len(companies)} companies from table")
                 
             except Exception as e:
@@ -634,7 +994,7 @@ def _fetch_companies_via_selenium(base_url: str, klse_sector: str, sector: str) 
         return []
 
 
-def _parse_company_table(soup: BeautifulSoup, sector: str) -> List[Company]:
+def _parse_company_table(soup: BeautifulSoup, sector: str, style: str) -> List[Company]:
     """
     Parse company data from HTML table.
     
@@ -673,7 +1033,7 @@ def _parse_company_table(soup: BeautifulSoup, sector: str) -> List[Company]:
                 cells = row.find_all("td")
                 if len(cells) >= 2:
                     try:
-                        # Table structure: name, code, ..., price (col 4), ..., volume (col 8), eps (col 9), ..., pe (col 12), dy (col 13), roe (col 14), ..., mcap (col 16)
+                        # Table structure: name (col 1), code (col 2), category (col 3), price (col 4), ..., eps (col 9), ..., pe (col 12), dy (col 13), roe (col 14), ..., mcap (col 16)
                         # Extract name and check if it's a link
                         name_cell = cells[0]
                         name_link = name_cell.find("a")
@@ -694,8 +1054,13 @@ def _parse_company_table(soup: BeautifulSoup, sector: str) -> List[Company]:
                         # Remove [s] suffix from stock names (e.g., "BURSA [s]" -> "BURSA")
                         name = name.replace(" [s]", "").replace("[s]", "").strip()
                         code = cells[1].get_text(strip=True)
+                        category = cells[2].get_text(strip=True) if len(cells) > 2 else None
+                        
+                        # Filter out companies with "Leap Market" in category
+                        if category and "Leap Market" in category:
+                            continue
+                        
                         price = _parse_float(cells[3].get_text(strip=True)) if len(cells) > 3 else None
-                        volume = _parse_float(cells[7].get_text(strip=True)) if len(cells) > 7 else None
                         eps = _parse_float(cells[8].get_text(strip=True)) if len(cells) > 8 else None
                         pe_ratio = _parse_float(cells[11].get_text(strip=True)) if len(cells) > 11 else None
                         dividend_yield = _parse_float(cells[12].get_text(strip=True)) if len(cells) > 12 else None
@@ -704,20 +1069,21 @@ def _parse_company_table(soup: BeautifulSoup, sector: str) -> List[Company]:
                         
                         # Debug first company to verify structure
                         if idx == 1:
-                            print(f"    [4.5.3.3] First company - name: '{name}', code: '{code}', detail_url: '{detail_url}', price: {price}, volume: {volume}, eps: {eps}, pe: {pe_ratio}, dy: {dividend_yield}, roe: {roe}, mcap: {market_cap}")
+                            print(f"    [4.5.3.3] First company - name: '{name}', code: '{code}', category: '{category}', detail_url: '{detail_url}', price: {price}, eps: {eps}, pe: {pe_ratio}, dy: {dividend_yield}, roe: {roe}, mcap: {market_cap}")
                         
                         company = Company(
                             name=name,
                             code=code,
+                            category=category,
                             detail_url=detail_url,
                             price=price,
-                            volume=volume,
                             eps=eps,
                             pe_ratio=pe_ratio,
                             dividend_yield=dividend_yield,
                             roe=roe,
                             market_cap=market_cap,
-                            sector=sector  # Use the sector parameter passed to function
+                            sector=sector,  # Use the sector parameter passed to function
+                            style=style  # Investment style based on sector
                         )
                         companies.append(company)
                         if idx % 10 == 0:  # Log every 10 companies
@@ -737,13 +1103,14 @@ def _parse_company_table(soup: BeautifulSoup, sector: str) -> List[Company]:
     return companies
 
 
-def _extract_companies_from_table(driver, sector: str) -> List[Company]:
+def _extract_companies_from_table(driver, sector: str, style: str) -> List[Company]:
     """
     Extract company data from Selenium driver page.
     
     Args:
         driver: Selenium WebDriver instance
         sector: Sector name
+        style: Investment style (Value, Growth, or Blend)
         
     Returns:
         List of Company objects
@@ -792,7 +1159,7 @@ def _extract_companies_from_table(driver, sector: str) -> List[Company]:
             try:
                 cells = row.find_elements(By.TAG_NAME, "td")
                 if len(cells) >= 2:
-                    # Table structure: name, code, ..., price (col 4), ..., volume (col 8), eps (col 9), ..., pe (col 12), dy (col 13), roe (col 14), ..., mcap (col 16)
+                    # Table structure: name (col 1), code (col 2), category (col 3), price (col 4), ..., eps (col 9), ..., pe (col 12), dy (col 13), roe (col 14), ..., mcap (col 16)
                     # Extract name and check if it's a link
                     name_cell = cells[0]
                     try:
@@ -814,8 +1181,13 @@ def _extract_companies_from_table(driver, sector: str) -> List[Company]:
                     # Remove [s] suffix from stock names
                     name = name.replace(" [s]", "").replace("[s]", "").strip()
                     code = cells[1].text.strip()
+                    category = cells[2].text.strip() if len(cells) > 2 else None
+                    
+                    # Filter out companies with "Leap Market" in category
+                    if category and "Leap Market" in category:
+                        continue
+                    
                     price = _parse_float(cells[3].text.strip()) if len(cells) > 3 else None
-                    volume = _parse_float(cells[7].text.strip()) if len(cells) > 7 else None
                     eps = _parse_float(cells[8].text.strip()) if len(cells) > 8 else None
                     pe_ratio = _parse_float(cells[11].text.strip()) if len(cells) > 11 else None
                     dividend_yield = _parse_float(cells[12].text.strip()) if len(cells) > 12 else None
@@ -824,20 +1196,21 @@ def _extract_companies_from_table(driver, sector: str) -> List[Company]:
                     
                     # Debug first company to verify structure
                     if idx == 1:
-                        print(f"      [5.14.2.2] First company - name: '{name}', code: '{code}', detail_url: '{detail_url}', price: {price}, volume: {volume}, eps: {eps}, pe: {pe_ratio}, dy: {dividend_yield}, roe: {roe}, mcap: {market_cap}, sector: '{sector}'")
+                        print(f"      [5.14.2.2] First company - name: '{name}', code: '{code}', category: '{category}', detail_url: '{detail_url}', price: {price}, eps: {eps}, pe: {pe_ratio}, dy: {dividend_yield}, roe: {roe}, mcap: {market_cap}, sector: '{sector}'")
                     
                     company = Company(
                         name=name,
                         code=code,
+                        category=category,
                         detail_url=detail_url,
                         price=price,
-                        volume=volume,
                         eps=eps,
                         pe_ratio=pe_ratio,
                         dividend_yield=dividend_yield,
                         roe=roe,
                         market_cap=market_cap,
-                        sector=sector  # Use the sector parameter passed to function
+                        sector=sector,  # Use the sector parameter passed to function
+                        style=style  # Investment style based on sector
                     )
                     companies.append(company)
                     if idx % 10 == 0:  # Log every 10 companies

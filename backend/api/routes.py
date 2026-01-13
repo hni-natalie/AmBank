@@ -20,6 +20,9 @@ import tempfile
 
 router = APIRouter()
 
+# In-memory watchlist storage (session-based)
+_watchlist: Dict[str, Dict] = {}  # {company_code: company_data}
+
 
 class PDFSearchRequest(BaseModel):
     """Request model for PDF search endpoint."""
@@ -536,6 +539,192 @@ async def get_companies_by_sector(sector_name: str = Query(..., description="Sec
         raise HTTPException(
             status_code=500,
             detail=f"Error fetching companies by sector: {str(e)}"
+        )
+
+
+@router.put("/company/{company_code}/watchlist")
+async def update_company_watchlist(company_code: str, request: Dict):
+    """
+    Update watchlist status for a company.
+    
+    Request body:
+        {"watchlist": true/false}
+    """
+    watchlist_status = request.get("watchlist", False)
+    
+    if watchlist_status:
+        # Add to watchlist - need to fetch company data if not already stored
+        if company_code not in _watchlist:
+            # Fetch company data from search
+            company_data = _search_company_on_klse(company_code)
+            if company_data:
+                _watchlist[company_code] = company_data
+        return {"success": True, "watchlist": True, "company_code": company_code}
+    else:
+        # Remove from watchlist
+        if company_code in _watchlist:
+            del _watchlist[company_code]
+        return {"success": True, "watchlist": False, "company_code": company_code}
+
+
+@router.get("/company/watchlist")
+async def get_watchlist_companies():
+    """
+    Get all companies in the watchlist.
+    
+    Returns:
+        List of watchlist companies with their data
+    """
+    companies = list(_watchlist.values())
+    for company in companies:
+        company["watchlist"] = True
+    return {
+        "companies": companies,
+        "total_count": len(companies)
+    }
+
+
+class InvestmentAnalysisRequest(BaseModel):
+    """Request model for investment analysis."""
+    companies: List[Dict]  # List of 3 companies with their metrics
+
+
+class InvestmentAnalysisResponse(BaseModel):
+    """Response model for investment analysis."""
+    analysis: str
+    most_investable: str  # Company code of most investable company
+    reasoning: str
+
+
+@router.post("/company/analyze-investment", response_model=InvestmentAnalysisResponse)
+async def analyze_investment(request: InvestmentAnalysisRequest):
+    """
+    Analyze companies based on key metrics and determine if searched company is most investable.
+    
+    Uses Ollama to analyze Revenue Growth Rate, PE Ratio, and ROE to determine
+    which company is the most investable option.
+    
+    Request Body:
+        {
+            "companies": [
+                {
+                    "name": "Company A",
+                    "code": "1234",
+                    "revenue_growth": 15.5,
+                    "pe_ratio": 12.3,
+                    "roe": 18.2
+                },
+                ...
+            ]
+        }
+    
+    Returns:
+        InvestmentAnalysisResponse with AI analysis and recommendation
+    """
+    try:
+        # Import ollama
+        try:
+            import ollama
+        except ImportError:
+            raise HTTPException(
+                status_code=500,
+                detail="Ollama Python package not installed. Install with: pip install ollama"
+            )
+        
+        if not request.companies or len(request.companies) < 1:
+            raise HTTPException(status_code=400, detail="At least one company required")
+        
+        # Format company data for analysis
+        companies_text = ""
+        searched_company = request.companies[0] if len(request.companies) > 0 else None
+        
+        for idx, company in enumerate(request.companies):
+            is_searched = " (SEARCHED COMPANY)" if idx == 0 else ""
+            companies_text += f"""
+Company {idx + 1}{is_searched}:
+- Name: {company.get('name', 'N/A')}
+- Code: {company.get('code', 'N/A')}
+- Revenue Growth Rate: {company.get('revenue_growth', 'N/A')}%
+- PE Ratio: {company.get('pe_ratio', 'N/A')}
+- ROE (Return on Equity): {company.get('roe', 'N/A')}%
+"""
+        
+        prompt = f"""You are a financial analyst. Analyze the following companies and determine which one is the most investable.
+
+{companies_text}
+
+Key Considerations:
+1. Revenue Growth Rate: Higher is generally better, indicates company is growing
+2. PE Ratio: Lower can indicate undervaluation, but context matters
+3. ROE: Higher is better, indicates efficient use of equity
+
+Important: The first company is the SEARCHED COMPANY. Determine if it remains the most investable option compared to its sector peers.
+
+Please provide:
+1. A brief analysis of each company's strengths and weaknesses
+2. Which company is the MOST INVESTABLE and why
+3. Specifically state whether the SEARCHED COMPANY (Company 1) is still the best investment choice
+
+Format your response as:
+ANALYSIS: [Your detailed analysis]
+MOST_INVESTABLE: [Company code]
+REASONING: [Why this company is most investable]
+"""
+        
+        # Call Ollama
+        try:
+            response = ollama.chat(
+                model="llama3.2",
+                messages=[{"role": "user", "content": prompt}]
+            )
+            ai_response = response['message']['content']
+            
+            # Parse response
+            analysis = ""
+            most_investable = searched_company.get('code', '') if searched_company else ""
+            reasoning = ""
+            
+            lines = ai_response.split('\n')
+            current_section = None
+            
+            for line in lines:
+                if line.startswith('ANALYSIS:'):
+                    current_section = 'analysis'
+                    analysis = line.replace('ANALYSIS:', '').strip()
+                elif line.startswith('MOST_INVESTABLE:'):
+                    current_section = 'most_investable'
+                    most_investable = line.replace('MOST_INVESTABLE:', '').strip()
+                elif line.startswith('REASONING:'):
+                    current_section = 'reasoning'
+                    reasoning = line.replace('REASONING:', '').strip()
+                elif current_section == 'analysis':
+                    analysis += '\n' + line
+                elif current_section == 'reasoning':
+                    reasoning += '\n' + line
+            
+            # If parsing failed, use the entire response as analysis
+            if not analysis:
+                analysis = ai_response
+                reasoning = "See analysis above"
+            
+            return InvestmentAnalysisResponse(
+                analysis=analysis.strip(),
+                most_investable=most_investable,
+                reasoning=reasoning.strip()
+            )
+            
+        except Exception as ollama_error:
+            raise HTTPException(
+                status_code=500,
+                detail=f"Ollama analysis failed: {str(ollama_error)}"
+            )
+            
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error analyzing investment: {str(e)}"
         )
 
 

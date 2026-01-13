@@ -996,15 +996,6 @@ def get_annual_report_pdfs(company_code: str) -> Dict:
                     dp_percent_text = cells[4].text.strip()
                     net_percent_text = cells[5].text.strip() if len(cells) > 5 else ""
                     
-                    if row_idx == 0:  # Only print debug for first row
-                        print(f"  [DEBUG] Raw cell values:")
-                        print(f"    Cell 0 (Year): '{financial_year}'")
-                        print(f"    Cell 1 (Revenue): '{revenue_text}'")
-                        print(f"    Cell 2 (Net): '{net_text}'")
-                        print(f"    Cell 3 (EPS): '{eps_text}'")
-                        print(f"    Cell 4 (DP%): '{dp_percent_text}'")
-                        print(f"    Cell 5 (Net%): '{net_percent_text}'")
-                    
                     # Add to history
                     financial_history.append({
                         "financial_year": financial_year,

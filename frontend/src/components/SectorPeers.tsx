@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { BarChart, Bar, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts';
 
 interface FinancialData {
   financial_year: string;
@@ -18,6 +19,8 @@ interface Company {
   change_points?: number;
   change_percent?: number;
   revenue?: number;
+  pe_ratio?: number;
+  roe?: number;
   annual_revenue?: number;
   annual_net?: number;
   annual_eps?: number;
@@ -25,6 +28,7 @@ interface Company {
   annual_net_percent?: number;
   financial_year?: string;
   financial_history?: FinancialData[];
+  watchlist?: boolean;
 }
 
 interface SectorPeersResponse {
@@ -37,7 +41,49 @@ export const SectorPeers: React.FC = () => {
   const [data, setData] = useState<SectorPeersResponse | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [expandedCompany, setExpandedCompany] = useState<string | null>(null);
+  const [selectedCompanies, setSelectedCompanies] = useState<Company[]>([]);
+
+  const toggleWatchlist = async (companyCode: string, currentStatus: boolean) => {
+    try {
+      const response = await fetch(
+        `/api/company/${companyCode}/watchlist`,
+        {
+          method: 'PUT',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({ watchlist: !currentStatus })
+        }
+      );
+
+      if (!response.ok) {
+        throw new Error(`Failed to update watchlist`);
+      }
+
+      // Update local state
+      setSelectedCompanies(prev => 
+        prev.map(company => 
+          company.code === companyCode 
+            ? { ...company, watchlist: !currentStatus }
+            : company
+        )
+      );
+
+      if (data) {
+        setData({
+          ...data,
+          companies: data.companies.map(company =>
+            company.code === companyCode
+              ? { ...company, watchlist: !currentStatus }
+              : company
+          )
+        });
+      }
+    } catch (err) {
+      console.error('Error updating watchlist:', err);
+      alert('Failed to update watchlist. Please try again.');
+    }
+  };
 
   const fetchSectorPeers = async () => {
     if (!companyName.trim()) return;
@@ -56,16 +102,33 @@ export const SectorPeers: React.FC = () => {
 
       const result: SectorPeersResponse = await response.json();
       setData(result);
+      
+      // Select the searched company + 2 random peers with financial history
+      const companiesWithHistory = result.companies.filter(c => c.financial_history && c.financial_history.length > 0);
+      
+      // Find the searched company
+      const searchedCompany = companiesWithHistory.find(c => 
+        c.name.toLowerCase().includes(companyName.toLowerCase()) || 
+        c.code.toLowerCase().includes(companyName.toLowerCase())
+      );
+      
+      // Get other companies (excluding the searched one)
+      const otherCompanies = companiesWithHistory.filter(c => c !== searchedCompany);
+      
+      // Randomly select 2 companies from others
+      const shuffled = [...otherCompanies].sort(() => 0.5 - Math.random());
+      const randomTwo = shuffled.slice(0, 2);
+      
+      // Combine: searched company first, then 2 random ones
+      const selected = searchedCompany ? [searchedCompany, ...randomTwo] : randomTwo.slice(0, 3);
+      setSelectedCompanies(selected);
+      
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to fetch data');
     } finally {
       setLoading(false);
     }
   };
-
-  useEffect(() => {
-    fetchSectorPeers();
-  }, []);
 
   const formatNumber = (num?: number | null): string => {
     if (num === null || num === undefined) return '-';
@@ -138,134 +201,284 @@ export const SectorPeers: React.FC = () => {
             Sector: <span style={{ color: '#000', fontWeight: '600' }}>{data.sector}</span>
           </h2>
           <p style={{ color: '#000', marginBottom: '20px' }}>
-            Found {data.companies.length} companies in this sector
+            Showing financial history charts for 3 companies (searched company + 2 peers)
           </p>
 
-          {/* Companies Table */}
-          <div style={{ overflowX: 'auto' }}>
-            <table style={{
-              width: '100%',
-              borderCollapse: 'collapse',
-              backgroundColor: 'white',
-              boxShadow: '0 2px 4px rgba(0,0,0,0.1)'
-            }}>
-              <thead>
-                <tr style={{ backgroundColor: '#f8f9fa' }}>
-                  <th style={tableHeaderStyle}>Company</th>
-                  <th style={tableHeaderStyle}>Code</th>
-                  <th style={tableHeaderStyle}>Last Done</th>
-                  <th style={tableHeaderStyle}>Change</th>
-                  <th style={tableHeaderStyle}>Volume</th>
-                  <th style={tableHeaderStyle}>FY</th>
-                  <th style={tableHeaderStyle}>Revenue ('000)</th>
-                  <th style={tableHeaderStyle}>Net ('000)</th>
-                  <th style={tableHeaderStyle}>EPS</th>
-                  <th style={tableHeaderStyle}>DP%</th>
-                  <th style={tableHeaderStyle}>Net%</th>
-                </tr>
-              </thead>
-              <tbody>
-                {data.companies.map((company, index) => (
-                  <React.Fragment key={index}>
-                    <tr 
-                      style={{
-                        borderBottom: '1px solid #dee2e6',
-                        backgroundColor: index % 2 === 0 ? 'white' : '#f8f9fa',
-                        cursor: company.financial_history ? 'pointer' : 'default'
-                      }}
-                      onClick={() => {
-                        if (company.financial_history) {
-                          setExpandedCompany(expandedCompany === company.code ? null : company.code);
-                        }
-                      }}
-                    >
-                      <td style={tableCellStyle}>
-                        {company.financial_history && (
-                          <span style={{ marginRight: '8px' }}>
-                            {expandedCompany === company.code ? '▼' : '▶'}
-                          </span>
-                        )}
-                        {company.name}
-                      </td>
-                      <td style={tableCellStyle}>{company.code}</td>
-                      <td style={tableCellStyle}>{formatNumber(company.last_done)}</td>
-                      <td style={{
-                        ...tableCellStyle,
-                        color: (company.change_points ?? 0) >= 0 ? '#28a745' : '#dc3545'
-                      }}>
-                        {company.change_points !== null && company.change_points !== undefined ? (
-                          <>
-                            {company.change_points >= 0 ? '+' : ''}{formatNumber(company.change_points)}
-                            {' '}({formatPercent(company.change_percent)})
-                          </>
-                        ) : '-'}
-                      </td>
-                      <td style={tableCellStyle}>{formatNumber(company.volume)}</td>
-                      <td style={tableCellStyle}>{company.financial_year || '-'}</td>
-                      <td style={tableCellStyle}>{formatNumber(company.annual_revenue)}</td>
-                      <td style={tableCellStyle}>{formatNumber(company.annual_net)}</td>
-                      <td style={tableCellStyle}>{formatNumber(company.annual_eps)}</td>
-                      <td style={tableCellStyle}>{formatPercent(company.annual_dp_percent)}</td>
-                      <td style={tableCellStyle}>{formatPercent(company.annual_net_percent)}</td>
-                    </tr>
-                    
-                    {/* Expanded financial history */}
-                    {expandedCompany === company.code && company.financial_history && (
-                      <tr>
-                        <td colSpan={11} style={{ padding: '0', backgroundColor: '#f8f9fa' }}>
-                          <div style={{ padding: '15px 30px', borderLeft: '3px solid #007bff' }}>
-                            <h4 style={{ marginBottom: '10px', color: '#000' }}>Financial History</h4>
-                            <table style={{ width: '100%', fontSize: '13px' }}>
-                              <thead>
-                                <tr>
-                                  <th style={{ padding: '8px', textAlign: 'left', color: '#666' }}>Year</th>
-                                  <th style={{ padding: '8px', textAlign: 'left', color: '#666' }}>Revenue ('000)</th>
-                                  <th style={{ padding: '8px', textAlign: 'left', color: '#666' }}>Net ('000)</th>
-                                  <th style={{ padding: '8px', textAlign: 'left', color: '#666' }}>EPS</th>
-                                  <th style={{ padding: '8px', textAlign: 'left', color: '#666' }}>DP%</th>
-                                  <th style={{ padding: '8px', textAlign: 'left', color: '#666' }}>Net%</th>
-                                </tr>
-                              </thead>
-                              <tbody>
-                                {company.financial_history.map((year, yearIdx) => (
-                                  <tr key={yearIdx} style={{ backgroundColor: yearIdx % 2 === 0 ? '#fff' : '#f8f9fa' }}>
-                                    <td style={{ padding: '8px', color: '#000' }}>{year.financial_year}</td>
-                                    <td style={{ padding: '8px', color: '#000' }}>{formatNumber(year.revenue)}</td>
-                                    <td style={{ padding: '8px', color: '#000' }}>{formatNumber(year.net)}</td>
-                                    <td style={{ padding: '8px', color: '#000' }}>{formatNumber(year.eps)}</td>
-                                    <td style={{ padding: '8px', color: '#000' }}>{formatPercent(year.dp_percent)}</td>
-                                    <td style={{ padding: '8px', color: '#000' }}>{formatPercent(year.net_percent)}</td>
-                                  </tr>
-                                ))}
-                              </tbody>
-                            </table>
-                          </div>
-                        </td>
-                      </tr>
-                    )}
-                  </React.Fragment>
-                ))}
-              </tbody>
-            </table>
-          </div>
+          {/* Summary Section with 3 Bar Charts */}
+          {selectedCompanies.length > 0 && (() => {
+            // Define colors for each company
+            const companyColors = ['#ef4444', '#3b82f6', '#10b981']; // Red, Blue, Green
+            const companyLightColors = ['#fee2e2', '#dbeafe', '#d1fae5']; // Light versions
+            
+            // Calculate Revenue Growth Rate for each company
+            const growthData = selectedCompanies.map((company, idx) => {
+              const history = company.financial_history;
+              if (!history || history.length < 2) {
+                return { 
+                  company: company.name,
+                  value: 0,
+                  fill: companyColors[idx]
+                };
+              }
+              
+              const latestRevenue = history[history.length - 1]?.revenue || 0;
+              const priorRevenue = history[history.length - 2]?.revenue || 0;
+              
+              const growthRate = priorRevenue !== 0 
+                ? ((latestRevenue - priorRevenue) / priorRevenue) * 100 
+                : 0;
+              
+              return { 
+                company: company.name,
+                value: growthRate,
+                fill: companyColors[idx]
+              };
+            });
+
+            // Extract PE Ratio for each company
+            const peData = selectedCompanies.map((company, idx) => ({
+              company: company.name,
+              value: company.pe_ratio || 0,
+              fill: companyColors[idx]
+            }));
+
+            // Extract ROE for each company
+            const roeData = selectedCompanies.map((company, idx) => ({
+              company: company.name,
+              value: company.roe || 0,
+              fill: companyColors[idx]
+            }));
+
+            return (
+              <div style={{
+                backgroundColor: 'white',
+                borderRadius: '8px',
+                padding: '20px',
+                marginBottom: '30px',
+                boxShadow: '0 2px 8px rgba(0,0,0,0.1)',
+                border: '1px solid #e0e0e0'
+              }}>
+                <h3 style={{ marginBottom: '20px', color: '#000', fontSize: '18px', fontWeight: '600' }}>
+                  Key Metrics Comparison
+                </h3>
+                
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '30px' }}>
+                  {/* Revenue Growth Rate Bar Chart */}
+                  <div>
+                    <h4 style={{ fontSize: '14px', fontWeight: '600', color: '#000', marginBottom: '10px', textAlign: 'center' }}>
+                      Revenue Growth Rate
+                    </h4>
+                    <ResponsiveContainer width="100%" height={280}>
+                      <BarChart data={growthData}>
+                        <CartesianGrid strokeDasharray="3 3" />
+                        <XAxis dataKey="company" tick={{ fontSize: 12 }} />
+                        <YAxis label={{ value: 'Growth %', angle: -90, position: 'insideLeft' }} />
+                        <Tooltip formatter={(value: number) => `${value.toFixed(2)}%`} />
+                        <Bar dataKey="value" />
+                      </BarChart>
+                    </ResponsiveContainer>
+                  </div>
+
+                  {/* PE Ratio Bar Chart */}
+                  <div>
+                    <h4 style={{ fontSize: '14px', fontWeight: '600', color: '#000', marginBottom: '10px', textAlign: 'center' }}>
+                      PE Ratio
+                    </h4>
+                    <ResponsiveContainer width="100%" height={280}>
+                      <BarChart data={peData}>
+                        <CartesianGrid strokeDasharray="3 3" />
+                        <XAxis dataKey="company" tick={{ fontSize: 12 }} />
+                        <YAxis label={{ value: 'PE Ratio', angle: -90, position: 'insideLeft' }} />
+                        <Tooltip formatter={(value: number) => value.toFixed(2)} />
+                        <Bar dataKey="value" />
+                      </BarChart>
+                    </ResponsiveContainer>
+                  </div>
+
+                  {/* ROE Bar Chart */}
+                  <div>
+                    <h4 style={{ fontSize: '14px', fontWeight: '600', color: '#000', marginBottom: '10px', textAlign: 'center' }}>
+                      Return on Equity (ROE)
+                    </h4>
+                    <ResponsiveContainer width="100%" height={280}>
+                      <BarChart data={roeData}>
+                        <CartesianGrid strokeDasharray="3 3" />
+                        <XAxis dataKey="company" tick={{ fontSize: 12 }} />
+                        <YAxis label={{ value: 'ROE %', angle: -90, position: 'insideLeft' }} />
+                        <Tooltip formatter={(value: number) => `${value.toFixed(2)}%`} />
+                        <Bar dataKey="value" />
+                      </BarChart>
+                    </ResponsiveContainer>
+                  </div>
+                </div>
+              </div>
+            );
+          })()}
+
+          {/* Charts for Selected Companies */}
+          {selectedCompanies.length > 0 ? (
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '20px' }}>
+              {selectedCompanies.map((company, idx) => {
+                // Define colors for each company
+                const companyColors = ['#ef4444', '#3b82f6', '#10b981'];
+                const companyLightColors = ['#fee2e2', '#dbeafe', '#d1fae5'];
+                
+                // Transform data to show only year and reverse order (oldest to newest: 2021 -> 2025)
+                const chartData = company.financial_history?.map(item => ({
+                  ...item,
+                  year: item.financial_year.split(',').pop()?.trim() || item.financial_year
+                })).reverse();
+
+                return (
+                  <div 
+                    key={company.code} 
+                    style={{ 
+                      padding: '15px',
+                      backgroundColor: companyLightColors[idx],
+                      borderRadius: '8px',
+                      boxShadow: '0 2px 8px rgba(0,0,0,0.1)',
+                      border: `2px solid ${companyColors[idx]}`
+                    }}
+                  >
+                    <h3 style={{ marginBottom: '15px', color: '#000', borderBottom: '2px solid #007bff', paddingBottom: '8px', fontSize: '14px', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                      <span>
+                        {company.name} ({company.code})
+                        {idx === 0 && <span style={{ fontSize: '11px', color: '#007bff', marginLeft: '8px', display: 'block' }}>Searched Company</span>}
+                      </span>
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          toggleWatchlist(company.code, company.watchlist || false);
+                        }}
+                        style={{
+                          background: 'none',
+                          border: 'none',
+                          cursor: 'pointer',
+                          fontSize: '20px',
+                          padding: '0',
+                          marginLeft: 'auto',
+                          transition: 'transform 0.2s',
+                          color: company.watchlist ? '#FFD700' : '#ccc'
+                        }}
+                        onMouseEnter={(e) => e.currentTarget.style.transform = 'scale(1.2)'}
+                        onMouseLeave={(e) => e.currentTarget.style.transform = 'scale(1)'}
+                        title={company.watchlist ? 'Remove from watchlist' : 'Add to watchlist'}
+                      >
+                        {company.watchlist ? '★' : '☆'}
+                      </button>
+                    </h3>
+
+                    {/* Revenue and Net Profit Bar Chart */}
+                    <div style={{ marginBottom: '25px' }}>
+                      <h4 style={{ marginBottom: '10px', color: '#333', fontSize: '13px' }}>Revenue & Net Profit ('000)</h4>
+                      <ResponsiveContainer width="100%" height={250}>
+                        <BarChart data={chartData}>
+                          <CartesianGrid strokeDasharray="3 3" />
+                          <XAxis 
+                            dataKey="year" 
+                          angle={-45}
+                          textAnchor="end"
+                          height={70}
+                          style={{ fontSize: '10px' }}
+                        />
+                        <YAxis style={{ fontSize: '10px' }} />
+                        <Tooltip 
+                          formatter={(value: number | undefined) => value !== undefined ? formatNumber(value) : '-'}
+                          contentStyle={{ backgroundColor: '#fff', border: '1px solid #ccc', fontSize: '11px' }}
+                        />
+                        <Legend wrapperStyle={{ fontSize: '11px' }} />
+                        <Bar dataKey="revenue" fill="#4285f4" name="Revenue" />
+                        <Bar dataKey="net" fill="#34a853" name="Net Profit" />
+                      </BarChart>
+                    </ResponsiveContainer>
+                  </div>
+
+                  {/* Net Margin & EPS Line Chart */}
+                  <div style={{ marginBottom: '25px' }}>
+                    <h4 style={{ marginBottom: '10px', color: '#333', fontSize: '13px' }}>Net Margin % & EPS</h4>
+                    <ResponsiveContainer width="100%" height={220}>
+                      <LineChart data={chartData}>
+                        <CartesianGrid strokeDasharray="3 3" />
+                        <XAxis 
+                          dataKey="year"
+                          angle={-45}
+                          textAnchor="end"
+                          height={70}
+                          style={{ fontSize: '10px' }}
+                        />
+                        <YAxis yAxisId="left" style={{ fontSize: '10px' }} />
+                        <YAxis yAxisId="right" orientation="right" style={{ fontSize: '10px' }} />
+                        <Tooltip 
+                          formatter={(value: number | undefined, name: string) => {
+                            if (value === undefined) return '-';
+                            return name === 'Net Margin %' ? `${value.toFixed(2)}%` : formatNumber(value);
+                          }}
+                          contentStyle={{ backgroundColor: '#fff', border: '1px solid #ccc', fontSize: '11px' }}
+                        />
+                        <Legend wrapperStyle={{ fontSize: '11px' }} />
+                        <Line 
+                          yAxisId="left"
+                          type="monotone" 
+                          dataKey="net_percent" 
+                          stroke="#ea4335" 
+                          strokeWidth={2}
+                          dot={{ fill: '#ea4335', r: 4 }}
+                          name="Net Margin %"
+                        />
+                        <Line 
+                          yAxisId="right"
+                          type="monotone" 
+                          dataKey="eps" 
+                          stroke="#f59e0b" 
+                          strokeWidth={2}
+                          dot={{ fill: '#f59e0b', r: 4 }}
+                          name="EPS"
+                        />
+                      </LineChart>
+                    </ResponsiveContainer>
+                  </div>
+
+                  {/* Dividend Payout Line Chart */}
+                  <div>
+                    <h4 style={{ marginBottom: '10px', color: '#333', fontSize: '13px' }}>Dividend Payout %</h4>
+                    <ResponsiveContainer width="100%" height={220}>
+                      <LineChart data={chartData}>
+                        <CartesianGrid strokeDasharray="3 3" />
+                        <XAxis 
+                          dataKey="year"
+                          angle={-45}
+                          textAnchor="end"
+                          height={70}
+                          style={{ fontSize: '10px' }}
+                        />
+                        <YAxis style={{ fontSize: '10px' }} />
+                        <Tooltip 
+                          formatter={(value: number | undefined) => value !== undefined ? `${value.toFixed(2)}%` : '-'}
+                          contentStyle={{ backgroundColor: '#fff', border: '1px solid #ccc', fontSize: '11px' }}
+                        />
+                        <Legend wrapperStyle={{ fontSize: '11px' }} />
+                        <Line 
+                          type="monotone" 
+                          dataKey="dp_percent" 
+                          stroke="#9333ea" 
+                          strokeWidth={2}
+                          dot={{ fill: '#9333ea', r: 4 }}
+                          name="Dividend Payout %"
+                        />
+                      </LineChart>
+                    </ResponsiveContainer>
+                  </div>
+                </div>
+                );
+              })}
+            </div>
+          ) : (
+            <div style={{ padding: '20px', backgroundColor: '#fff3cd', border: '1px solid #ffc107', borderRadius: '4px' }}>
+              <p style={{ color: '#856404', margin: 0 }}>No companies with financial history data available in this sector.</p>
+            </div>
+          )}
         </div>
       )}
     </div>
   );
-};
-
-const tableHeaderStyle: React.CSSProperties = {
-  padding: '12px',
-  textAlign: 'left',
-  fontWeight: '600',
-  borderBottom: '2px solid #dee2e6',
-  fontSize: '14px',
-  whiteSpace: 'nowrap',
-  color: '#000'
-};
-
-const tableCellStyle: React.CSSProperties = {
-  padding: '12px',
-  fontSize: '14px',
-  color: '#000'
 };

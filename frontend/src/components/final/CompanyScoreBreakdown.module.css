@@ -1,0 +1,47 @@
+.container {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.barContainer {
+  width: 100%;
+}
+
+.bar {
+  display: flex;
+  height: 24px;
+  border-radius: 4px;
+  overflow: hidden;
+  background-color: #f1f5f9;
+}
+
+.segment {
+  height: 100%;
+  transition: width 0.3s ease;
+  min-width: 2px;
+}
+
+.labels {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  font-size: 12px;
+}
+
+.labelItem {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.labelDot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+}
+
+.labelText {
+  color: #64748b;
+  font-weight: 500;
+}

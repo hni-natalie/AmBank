@@ -1,0 +1,135 @@
+.container {
+  margin-top: 48px;
+  padding: 24px;
+  background-color: #ffffff;
+  border: 1px solid #e2e8f0;
+  border-radius: 12px;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+}
+
+.title {
+  font-size: 20px;
+  font-weight: 600;
+  color: #1e293b;
+  margin: 0 0 20px 0;
+}
+
+.emptyState {
+  padding: 32px;
+  text-align: center;
+  color: #64748b;
+  font-size: 15px;
+}
+
+.list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 16px;
+  background-color: #f8fafc;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  transition: background-color 0.2s;
+}
+
+.item:hover {
+  background-color: #f1f5f9;
+}
+
+.itemContent {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.itemHeader {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.ticker {
+  font-size: 16px;
+  font-weight: 700;
+  color: #1e293b;
+}
+
+.itemDetails {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  font-size: 14px;
+}
+
+.name {
+  color: #475569;
+  font-weight: 500;
+}
+
+.sector {
+  color: #64748b;
+  font-size: 13px;
+}
+
+.actions {
+  display: flex;
+  gap: 8px;
+}
+
+.viewButton,
+.removeButton {
+  padding: 8px 16px;
+  border-radius: 6px;
+  font-size: 14px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.2s;
+  border: 1px solid;
+}
+
+.viewButton {
+  background-color: #3b82f6;
+  color: #ffffff;
+  border-color: #3b82f6;
+}
+
+.viewButton:hover {
+  background-color: #2563eb;
+  border-color: #2563eb;
+}
+
+.removeButton {
+  background-color: #ffffff;
+  color: #64748b;
+  border-color: #cbd5e1;
+}
+
+.removeButton:hover {
+  background-color: #f1f5f9;
+  color: #475569;
+  border-color: #94a3b8;
+}
+
+@media (max-width: 768px) {
+  .item {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 12px;
+  }
+
+  .actions {
+    width: 100%;
+  }
+
+  .viewButton,
+  .removeButton {
+    flex: 1;
+  }
+}

@@ -1,184 +1,29 @@
-import React, { useState } from 'react';
-import { GuidedChat } from './components/GuidedChat';
-import { Dashboard } from './components/Dashboard';
-import { DecisionTable } from './components/DecisionTable';
-import { SectorPeers } from './components/SectorPeers';
-
-interface Decision {
-  decision: string;
-  confidence: number;
-  reasoning: string[];
-}
+import { Routes, Route } from 'react-router-dom';
+import { LandingPage } from './pages/LandingPage';
+import { CompanyResultPage } from './pages/CompanyResultPage';
+import { ComparePeersPage } from './pages/ComparePeersPage';
+import { HomePage } from './pages/HomePage';
+import { NewsPage } from './pages/NewsPage';
+import { CompaniesPage } from './pages/CompaniesPage';
+import { FinalListPage } from './pages/FinalListPage';
+import { DashboardPage } from './pages/DashboardPage';
 
 /**
- * Main App component - orchestrates the MVP flow.
- * 
- * Flow:
- * 1. User submits preferences via GuidedChat
- * 2. Send preferences to backend
- * 3. Receive decision JSON
- * 4. Display in Dashboard and DecisionTable (only after selection)
+ * Main App component - handles routing.
  */
 function App() {
-  const [currentView, setCurrentView] = useState<'chat' | 'sector-peers'>('sector-peers');
-  const [decision, setDecision] = useState<Decision | null>(null);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [hasSubmitted, setHasSubmitted] = useState(false);
-
-  const handlePreferencesSubmit = async (preferences: {
-    time_horizon: string;
-    risk_level: string;
-    sectors: string[];
-  }) => {
-    setLoading(true);
-    setError(null);
-    setHasSubmitted(true);
-
-    try {
-      const response = await fetch('/api/decision', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify(preferences),
-      });
-
-      if (!response.ok) {
-        throw new Error(`HTTP error! status: ${response.status}`);
-      }
-
-      const decisionData: Decision = await response.json();
-      setDecision(decisionData);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Unknown error');
-    } finally {
-      setLoading(false);
-    }
-  };
-
   return (
-    <div style={{ 
-      minHeight: '100vh', 
-      backgroundColor: '#f5f5f5',
-      display: 'flex',
-      flexDirection: 'column'
-    }}>
-      {/* Navigation */}
-      <nav style={{
-        backgroundColor: 'white',
-        boxShadow: '0 2px 4px rgba(0,0,0,0.1)',
-        padding: '0 20px',
-        marginBottom: '20px'
-      }}>
-        <div style={{
-          display: 'flex',
-          gap: '20px',
-          maxWidth: '1400px',
-          margin: '0 auto'
-        }}>
-          <button
-            onClick={() => setCurrentView('sector-peers')}
-            style={{
-              padding: '15px 20px',
-              border: 'none',
-              background: 'none',
-              cursor: 'pointer',
-              fontSize: '16px',
-              fontWeight: currentView === 'sector-peers' ? '600' : '400',
-              color: currentView === 'sector-peers' ? '#007bff' : '#666',
-              borderBottom: currentView === 'sector-peers' ? '3px solid #007bff' : 'none'
-            }}
-          >
-            Sector Peers
-          </button>
-          <button
-            onClick={() => {
-              setCurrentView('chat');
-              setHasSubmitted(false);
-            }}
-            style={{
-              padding: '15px 20px',
-              border: 'none',
-              background: 'none',
-              cursor: 'pointer',
-              fontSize: '16px',
-              fontWeight: currentView === 'chat' ? '600' : '400',
-              color: currentView === 'chat' ? '#007bff' : '#666',
-              borderBottom: currentView === 'chat' ? '3px solid #007bff' : 'none'
-            }}
-          >
-            Decision Analysis
-          </button>
-        </div>
-      </nav>
-
-      {/* Content */}
-      {currentView === 'sector-peers' ? (
-        <SectorPeers />
-      ) : (
-        <>
-          {!hasSubmitted ? (
-            // Landing page - only show GuidedChat
-            <GuidedChat onPreferencesSubmit={handlePreferencesSubmit} />
-          ) : (
-            // Results page - show decision results
-            <>
-              {loading && (
-                <div style={{
-                  maxWidth: '768px',
-                  margin: '0 auto',
-                  padding: '24px 20px',
-                  textAlign: 'center',
-                  color: '#8e8ea0'
-                }}>
-                  <div style={{
-                    display: 'inline-block',
-                    width: '40px',
-                    height: '40px',
-                    border: '3px solid #565869',
-                    borderTopColor: '#10a37f',
-                    borderRadius: '50%',
-                    animation: 'spin 1s linear infinite',
-                    marginBottom: '16px'
-                  }} />
-                  <p style={{ fontSize: '16px' }}>Processing your investment decision...</p>
-                </div>
-              )}
-
-              {error && (
-                <div style={{
-                  maxWidth: '768px',
-                  margin: '24px auto',
-                  padding: '16px 20px',
-                  backgroundColor: '#ef4444',
-                  borderRadius: '8px',
-                  color: '#fff'
-                }}>
-                  <strong>Error:</strong> {error}
-                </div>
-              )}
-
-              {decision && !loading && (
-                <>
-                  <Dashboard decision={decision} />
-                  <DecisionTable decision={decision} />
-                </>
-              )}
-            </>
-          )}
-        </>
-      )}
-
-      <style>{`
-        @keyframes spin {
-          0% { transform: rotate(0deg); }
-          100% { transform: rotate(360deg); }
-        }
-      `}</style>
-    </div>
-  );
-}
-
+    <Routes>
+      <Route path="/" element={<LandingPage />} />
+      <Route path="/home" element={<HomePage />} />
+      <Route path="/assess" element={<LandingPage />} />
+      <Route path="/result/:jobId" element={<CompanyResultPage />} />
+      <Route path="/compare/:jobId" element={<ComparePeersPage />} />
+      <Route path="/monitor" element={<div>Watchlist monitor page (to be implemented)</div>} />
+      <Route path="/news" element={<NewsPage />} />
+      <Route path="/companies" element={<CompaniesPage />} />
+      <Route path="/final" element={<FinalListPage />} />
+      <Route path="/dashboard" element={<DashboardPage />} />
+    </Routes>
+  )}
 export default App;
-

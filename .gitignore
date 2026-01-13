@@ -183,3 +183,7 @@ lerna-debug.log*
 # yarn.lock
 # pnpm-lock.yaml
 
+venv/
+venv39/
+.venv/
+env/

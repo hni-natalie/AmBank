@@ -204,6 +204,7 @@ export const SectorPeers: React.FC = () => {
             Showing financial history charts for 3 companies (searched company + 2 peers)
           </p>
 
+
           {/* Summary Section with 3 Bar Charts */}
           {selectedCompanies.length > 0 && (() => {
             // Define colors for each company
@@ -270,9 +271,9 @@ export const SectorPeers: React.FC = () => {
                     </h4>
                     <ResponsiveContainer width="100%" height={280}>
                       <BarChart data={growthData}>
-                        <CartesianGrid strokeDasharray="3 3" />
+                        <CartesianGrid strokeDasharray="3 3" vertical={false} />
                         <XAxis dataKey="company" tick={{ fontSize: 12 }} />
-                        <YAxis label={{ value: 'Growth %', angle: -90, position: 'insideLeft' }} />
+                        <YAxis tick={false} label={{ value: 'Growth %', angle: -90, position: 'insideLeft' }} />
                         <Tooltip formatter={(value: number) => `${value.toFixed(2)}%`} />
                         <Bar dataKey="value" />
                       </BarChart>
@@ -286,9 +287,9 @@ export const SectorPeers: React.FC = () => {
                     </h4>
                     <ResponsiveContainer width="100%" height={280}>
                       <BarChart data={peData}>
-                        <CartesianGrid strokeDasharray="3 3" />
+                        <CartesianGrid strokeDasharray="3 3" vertical={false} />
                         <XAxis dataKey="company" tick={{ fontSize: 12 }} />
-                        <YAxis label={{ value: 'PE Ratio', angle: -90, position: 'insideLeft' }} />
+                        <YAxis tick={false} label={{ value: 'PE Ratio', angle: -90, position: 'insideLeft' }} />
                         <Tooltip formatter={(value: number) => value.toFixed(2)} />
                         <Bar dataKey="value" />
                       </BarChart>
@@ -302,9 +303,9 @@ export const SectorPeers: React.FC = () => {
                     </h4>
                     <ResponsiveContainer width="100%" height={280}>
                       <BarChart data={roeData}>
-                        <CartesianGrid strokeDasharray="3 3" />
+                        <CartesianGrid strokeDasharray="3 3" vertical={false} />
                         <XAxis dataKey="company" tick={{ fontSize: 12 }} />
-                        <YAxis label={{ value: 'ROE %', angle: -90, position: 'insideLeft' }} />
+                        <YAxis tick={false} label={{ value: 'ROE %', angle: -90, position: 'insideLeft' }} />
                         <Tooltip formatter={(value: number) => `${value.toFixed(2)}%`} />
                         <Bar dataKey="value" />
                       </BarChart>
@@ -368,37 +369,12 @@ export const SectorPeers: React.FC = () => {
                       </button>
                     </h3>
 
-                    {/* Revenue and Net Profit Bar Chart */}
-                    <div style={{ marginBottom: '25px' }}>
-                      <h4 style={{ marginBottom: '10px', color: '#333', fontSize: '13px' }}>Revenue & Net Profit ('000)</h4>
-                      <ResponsiveContainer width="100%" height={250}>
-                        <BarChart data={chartData}>
-                          <CartesianGrid strokeDasharray="3 3" />
-                          <XAxis 
-                            dataKey="year" 
-                          angle={-45}
-                          textAnchor="end"
-                          height={70}
-                          style={{ fontSize: '10px' }}
-                        />
-                        <YAxis style={{ fontSize: '10px' }} />
-                        <Tooltip 
-                          formatter={(value: number | undefined) => value !== undefined ? formatNumber(value) : '-'}
-                          contentStyle={{ backgroundColor: '#fff', border: '1px solid #ccc', fontSize: '11px' }}
-                        />
-                        <Legend wrapperStyle={{ fontSize: '11px' }} />
-                        <Bar dataKey="revenue" fill="#4285f4" name="Revenue" />
-                        <Bar dataKey="net" fill="#34a853" name="Net Profit" />
-                      </BarChart>
-                    </ResponsiveContainer>
-                  </div>
-
                   {/* Net Margin & EPS Line Chart */}
                   <div style={{ marginBottom: '25px' }}>
                     <h4 style={{ marginBottom: '10px', color: '#333', fontSize: '13px' }}>Net Margin % & EPS</h4>
                     <ResponsiveContainer width="100%" height={220}>
                       <LineChart data={chartData}>
-                        <CartesianGrid strokeDasharray="3 3" />
+                        <CartesianGrid strokeDasharray="3 3" vertical={false} />
                         <XAxis 
                           dataKey="year"
                           angle={-45}
@@ -406,8 +382,8 @@ export const SectorPeers: React.FC = () => {
                           height={70}
                           style={{ fontSize: '10px' }}
                         />
-                        <YAxis yAxisId="left" style={{ fontSize: '10px' }} />
-                        <YAxis yAxisId="right" orientation="right" style={{ fontSize: '10px' }} />
+                        <YAxis yAxisId="left" tick={false} style={{ fontSize: '10px' }} />
+                        <YAxis yAxisId="right" tick={false} orientation="right" style={{ fontSize: '10px' }} />
                         <Tooltip 
                           formatter={(value: number | undefined, name: string) => {
                             if (value === undefined) return '-';
@@ -443,7 +419,7 @@ export const SectorPeers: React.FC = () => {
                     <h4 style={{ marginBottom: '10px', color: '#333', fontSize: '13px' }}>Dividend Payout %</h4>
                     <ResponsiveContainer width="100%" height={220}>
                       <LineChart data={chartData}>
-                        <CartesianGrid strokeDasharray="3 3" />
+                        <CartesianGrid strokeDasharray="3 3" vertical={false} />
                         <XAxis 
                           dataKey="year"
                           angle={-45}
@@ -451,7 +427,7 @@ export const SectorPeers: React.FC = () => {
                           height={70}
                           style={{ fontSize: '10px' }}
                         />
-                        <YAxis style={{ fontSize: '10px' }} />
+                        <YAxis tick={false} style={{ fontSize: '10px' }} />
                         <Tooltip 
                           formatter={(value: number | undefined) => value !== undefined ? `${value.toFixed(2)}%` : '-'}
                           contentStyle={{ backgroundColor: '#fff', border: '1px solid #ccc', fontSize: '11px' }}

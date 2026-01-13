@@ -1464,17 +1464,43 @@ def get_companies_by_sector_name(sector: str) -> List[Company]:
         else:
             print(f"  ⚠ Could not find sector '{sector}' in sector or subsector dropdowns")
         
-        # Step 6: Fetch average volume for all companies
+        # Step 6: Filter companies by financial criteria
         if companies:
-            print(f"  [STEP 6] Fetching average volume for {len(companies)} companies...")
+            print(f"  [STEP 6] Filtering companies by financial criteria...")
+            print(f"    - PE Ratio <= 25")
+            print(f"    - Market Cap <= 200M")
+            print(f"    - ROE >= 12")
+            
+            initial_count = len(companies)
+            filtered_companies = []
+            
+            for company in companies:
+                # Check filtering criteria
+                pe_ok = company.pe_ratio is not None and company.pe_ratio <= 25
+                market_cap_ok = company.market_cap is not None and company.market_cap <= 200
+                roe_ok = company.roe is not None and company.roe >= 12
+                
+                if pe_ok and market_cap_ok and roe_ok:
+                    filtered_companies.append(company)
+                    print(f"    ✓ {company.name} ({company.code}): PE={company.pe_ratio}, Cap={company.market_cap}M, ROE={company.roe}")
+                else:
+                    reasons = []
+                    if not pe_ok:
+                        reasons.append(f"PE={company.pe_ratio}")
+                    if not market_cap_ok:
+                        reasons.append(f"Cap={company.market_cap}M")
+                    if not roe_ok:
+                        reasons.append(f"ROE={company.roe}")
+                    print(f"    ⊗ {company.name} ({company.code}): Filtered out ({', '.join(reasons)})")
+            
+            companies = filtered_companies
+            print(f"  ✓ Filtering complete: {initial_count} → {len(companies)} companies")
+        
+        # Step 7: Fetch average volume for filtered companies
+        if companies:
+            print(f"  [STEP 7] Fetching average volume for {len(companies)} filtered companies...")
             companies = fetch_average_volume_for_companies(companies)
             print(f"  ✓ Volume fetching complete")
-        
-        # Step 7: Fetch annual reports for all companies
-        if companies:
-            print(f"  [STEP 7] Fetching annual reports for {len(companies)} companies...")
-            companies = fetch_annual_reports_for_companies(companies)
-            print(f"  ✓ Annual report fetching complete")
         
         agent_logger.log_agent_end(
             input_data={"sector": sector},
@@ -1919,9 +1945,9 @@ def _extract_company_from_detail_page(driver, company_name: str) -> Dict:
     
     try:
         # Extract code from URL first (most reliable)
-        # URL format: https://www.klsescreener.com/v2/stocks/view/5398/gamuda-berhad
+        # URL format: https://www.klsescreener.com/v2/stocks/view/5398/gamuda-berhad or /03057/sancy-berhad
         current_url = driver.current_url
-        url_code_match = re.search(r'/stocks/view/(\d{4})/', current_url)
+        url_code_match = re.search(r'/stocks/view/(\d+)/', current_url)
         if url_code_match:
             company_data["code"] = url_code_match.group(1)
             print(f"  ✓ Extracted code from URL: {company_data['code']}")

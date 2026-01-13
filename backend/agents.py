@@ -9,7 +9,7 @@ import re
 import json
 from datetime import datetime
 from schemas.signals import MacroSignal
-from schemas.company import Company, SectorCompanies
+from schemas.company import Company, SectorCompanies, FinancialData
 from schemas.company_query import CompanyQueryResponse
 from utils.logger import AgentLogger, log_agent_execution
 import pdfplumber
@@ -664,13 +664,33 @@ def fetch_annual_reports_for_companies(companies: List[Company]) -> List[Company
             financial_data = get_annual_report_pdfs(company.code)
             
             if financial_data:
-                # Update company with financial data
-                company.financial_year = financial_data.get("financial_year")
-                company.annual_revenue = financial_data.get("annual_revenue")
-                company.annual_net = financial_data.get("annual_net")
-                company.annual_eps = financial_data.get("annual_eps")
-                company.annual_dp_percent = financial_data.get("annual_dp_percent")
-                company.annual_net_percent = financial_data.get("annual_net_percent")
+                # Convert financial_history dictionaries to FinancialData objects
+                financial_history_dicts = financial_data.get("financial_history")
+                financial_history_objects = None
+                
+                if financial_history_dicts:
+                    try:
+                        financial_history_objects = [
+                            FinancialData(**year_data) for year_data in financial_history_dicts
+                        ]
+                        print(f"    ✓ Converted {len(financial_history_objects)} years to FinancialData objects")
+                    except Exception as e:
+                        print(f"    ⚠ Error converting financial_history: {str(e)}")
+                        financial_history_objects = None
+                
+                # Update company with financial data using model_copy
+                company_dict = company.model_dump()
+                company_dict.update({
+                    "financial_year": financial_data.get("financial_year"),
+                    "annual_revenue": financial_data.get("annual_revenue"),
+                    "annual_net": financial_data.get("annual_net"),
+                    "annual_eps": financial_data.get("annual_eps"),
+                    "annual_dp_percent": financial_data.get("annual_dp_percent"),
+                    "annual_net_percent": financial_data.get("annual_net_percent"),
+                    "financial_history": financial_history_objects
+                })
+                companies[idx - 1] = Company(**company_dict)
+                
                 print(f"    ✓ Extracted financial data for FY {company.financial_year}")
                 success_count += 1
             else:
@@ -894,20 +914,11 @@ def get_annual_report_pdfs(company_code: str) -> Dict:
         time.sleep(3)
         print(f"  ✓ Navigated to Annual page")
         
-        # Debug: Print page text content
-        print(f"\n{'='*80}")
-        print(f"[DEBUG] PAGE CONTENT:")
-        print(f"{'='*80}")
-        page_text = driver.find_element(By.TAG_NAME, "body").text
-        print(page_text)
-        print(f"{'='*80}\n")
-        
         # Step 3: Extract financial data from table
         print(f"  [STEP 3] Extracting financial data from table...")
         
         # First, find all tables on the page
         all_tables = driver.find_elements(By.CSS_SELECTOR, "table")
-        print(f"  [DEBUG] Found {len(all_tables)} tables on the page")
         
         # Find the correct table - should have rows with 7 cells (Financial Year, Revenue, Net, EPS, DP%, Net%, Report)
         # Note: Some rows might have both td and th cells, so count total cells
@@ -935,28 +946,12 @@ def get_annual_report_pdfs(company_code: str) -> Dict:
         
         if not target_table:
             print(f"  ⚠ Could not find table with 7-cell rows")
-            # Debug: show structure of ALL tables
-            print(f"  [DEBUG] Table structure analysis (all {len(all_tables)} tables):")
-            for table_idx, table in enumerate(all_tables):
-                try:
-                    rows = table.find_elements(By.TAG_NAME, "tr")
-                    print(f"    Table {table_idx + 1}: {len(rows)} rows")
-                    for row_idx, row in enumerate(rows[:3]):
-                        cells = row.find_elements(By.TAG_NAME, "td")
-                        th_cells = row.find_elements(By.TAG_NAME, "th")
-                        print(f"      Row {row_idx}: {len(cells)} td cells, {len(th_cells)} th cells")
-                        if cells:
-                            print(f"        First cell: '{cells[0].text.strip()[:30]}'")
-                except:
-                    pass
             return {}
         
         # Now extract rows from the target table
         rows = target_table.find_elements(By.CSS_SELECTOR, "tbody tr")
         if not rows:
             rows = target_table.find_elements(By.TAG_NAME, "tr")
-        
-        print(f"  [DEBUG] Target table has {len(rows)} rows")
         
         # Find all data rows (up to 5 rows with financial data)
         data_rows = []
@@ -969,13 +964,8 @@ def get_annual_report_pdfs(company_code: str) -> Dict:
                 # We want a data row (has td cells, not just th cells)
                 if len(td_cells) > 0 and total_cells == 7:
                     data_rows.append(row)
-                    print(f"  [DEBUG] Found data row at index {idx} with {len(td_cells)} td cells + {len(th_cells)} th cells")
                     if len(data_rows) >= 5:  # Limit to 5 years
                         break
-                else:
-                    # Debug first few rows
-                    if idx < 5:
-                        print(f"  [DEBUG] Row {idx} has {len(td_cells)} td cells + {len(th_cells)} th cells - skipping")
             except:
                 continue
         
@@ -990,14 +980,8 @@ def get_annual_report_pdfs(company_code: str) -> Dict:
         for row_idx, data_row in enumerate(data_rows):
             try:
                 # Get all cells (both td and th) to extract data
-                # Note: td cells come first, then th cells in the order they appear
                 td_cells = data_row.find_elements(By.TAG_NAME, "td")
                 th_cells = data_row.find_elements(By.TAG_NAME, "th")
-                
-                if row_idx == 0:  # Only print debug for first row
-                    print(f"  [DEBUG] Cell structure: {len(td_cells)} td cells, {len(th_cells)} th cells")
-                    print(f"  [DEBUG] TD cell values: {[cell.text.strip() for cell in td_cells]}")
-                    print(f"  [DEBUG] TH cell values: {[cell.text.strip() for cell in th_cells]}")
                 
                 # Build cells array in DOM order by getting all children
                 all_cell_elements = data_row.find_elements(By.XPATH, "./*[self::td or self::th]")

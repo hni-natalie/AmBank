@@ -249,9 +249,9 @@ class NewsScraper:
         
         return articles[:limit]
     
-    def scrape_nst_economy_news(self, limit: int = 20) -> List[Dict]:
+    def scrape_thestar_energy_news(self, limit: int = 20) -> List[Dict]:
         """
-        Scrape news from NST Economy section.
+        Scrape news from The Star Energy tag.
         
         Args:
             limit: Maximum number of articles
@@ -259,7 +259,7 @@ class NewsScraper:
         Returns:
             List of article dictionaries
         """
-        url = "https://www.nst.com.my/business/economy"
+        url = "https://www.thestar.com.my/tag/energy"
         articles = []
         seen_links = set()
         
@@ -269,18 +269,22 @@ class NewsScraper:
             html = response.text
             soup = BeautifulSoup(html, "html.parser")
             
-            # Find article links - NST structure
+            # Find article links - The Star structure
             article_links = []
             
             # Look for article links
             for a in soup.find_all("a", href=True):
                 href = a.get('href', '')
-                # NST article links typically have /business/ or /economy/ pattern
-                if '/business/' in href or '/economy/' in href:
-                    link = urljoin("https://www.nst.com.my", href)
-                    if link not in seen_links and 'nst.com.my' in link:
+                # The Star article links typically have /news/ or /business/ pattern
+                if '/news/' in href or '/business/' in href or '/tag/energy/' in href:
+                    if href.startswith('http'):
+                        link = href
+                    else:
+                        link = urljoin("https://www.thestar.com.my", href)
+                    
+                    if link not in seen_links and 'thestar.com.my' in link:
                         # Filter out non-article pages
-                        if not any(x in link for x in ['/category/', '/tag/', '/author/', '/page/']):
+                        if not any(x in link for x in ['/tag/', '/author/', '/page/', '/category/']):
                             article_links.append(link)
                             seen_links.add(link)
             
@@ -289,12 +293,65 @@ class NewsScraper:
             
             # Scrape each article
             for link in article_links:
-                article = self._scrape_nst_article(link)
+                article = self._scrape_thestar_article(link)
                 if article:
                     articles.append(article)
                     time.sleep(0.5)
         except Exception as e:
-            print(f"Error scraping NST {url}: {str(e)}")
+            print(f"Error scraping The Star {url}: {str(e)}")
+        
+        return articles[:limit]
+    
+    def scrape_asian_power_news(self, limit: int = 20) -> List[Dict]:
+        """
+        Scrape news from Asian Power Malaysia market.
+        
+        Args:
+            limit: Maximum number of articles
+            
+        Returns:
+            List of article dictionaries
+        """
+        url = "https://asian-power.com/market/malaysia"
+        articles = []
+        seen_links = set()
+        
+        try:
+            response = self.session.get(url, timeout=10)
+            response.raise_for_status()
+            html = response.text
+            soup = BeautifulSoup(html, "html.parser")
+            
+            # Find article links - Asian Power structure
+            article_links = []
+            
+            # Look for article links
+            for a in soup.find_all("a", href=True):
+                href = a.get('href', '')
+                # Asian Power article links
+                if '/market/' in href or '/news/' in href or '/article/' in href:
+                    if href.startswith('http'):
+                        link = href
+                    else:
+                        link = urljoin("https://asian-power.com", href)
+                    
+                    if link not in seen_links and 'asian-power.com' in link:
+                        # Filter out non-article pages
+                        if not any(x in link for x in ['/tag/', '/author/', '/page/', '/category/']):
+                            article_links.append(link)
+                            seen_links.add(link)
+            
+            # Limit to recent articles
+            article_links = article_links[:limit]
+            
+            # Scrape each article
+            for link in article_links:
+                article = self._scrape_asian_power_article(link)
+                if article:
+                    articles.append(article)
+                    time.sleep(0.5)
+        except Exception as e:
+            print(f"Error scraping Asian Power {url}: {str(e)}")
         
         return articles[:limit]
     
@@ -353,8 +410,8 @@ class NewsScraper:
         
         return None
     
-    def _scrape_nst_article(self, url: str) -> Dict:
-        """Scrape a single NST article."""
+    def _scrape_thestar_article(self, url: str) -> Dict:
+        """Scrape a single The Star article."""
         try:
             response = self.session.get(url, timeout=10)
             response.raise_for_status()
@@ -367,6 +424,7 @@ class NewsScraper:
             # Extract content
             content = ""
             content_selectors = [
+                'div.story-body',
                 'div.article-content',
                 'div.post-content',
                 'article p',
@@ -389,7 +447,7 @@ class NewsScraper:
             
             # Extract date
             date = ""
-            date_selectors = ['time', '.date', '.published', '[datetime]', '.article-date']
+            date_selectors = ['time', '.date', '.published', '[datetime]', '.article-date', '.story-date']
             for selector in date_selectors:
                 date_elem = soup.select_one(selector)
                 if date_elem:
@@ -402,10 +460,66 @@ class NewsScraper:
                     'content': content,
                     'link': url,
                     'date': date,
-                    'source': 'New Straits Times'
+                    'source': 'The Star'
                 }
         except Exception as e:
-            print(f"Error scraping NST article {url}: {str(e)}")
+            print(f"Error scraping The Star article {url}: {str(e)}")
+        
+        return None
+    
+    def _scrape_asian_power_article(self, url: str) -> Dict:
+        """Scrape a single Asian Power article."""
+        try:
+            response = self.session.get(url, timeout=10)
+            response.raise_for_status()
+            soup = BeautifulSoup(response.text, "html.parser")
+            
+            # Extract title
+            title_elem = soup.find("h1") or soup.find("title")
+            title = title_elem.get_text(strip=True) if title_elem else "No Title"
+            
+            # Extract content
+            content = ""
+            content_selectors = [
+                'div.article-content',
+                'div.post-content',
+                'article p',
+                'div.content p',
+                'main p',
+                '.article-body p',
+                '.entry-content p'
+            ]
+            
+            for selector in content_selectors:
+                paragraphs = soup.select(f'{selector} p')
+                if paragraphs:
+                    content = ' '.join([p.get_text(strip=True) for p in paragraphs])
+                    break
+            
+            # Fallback
+            if not content:
+                paragraphs = soup.find_all('p')
+                content = ' '.join([p.get_text(strip=True) for p in paragraphs[:20]])
+            
+            # Extract date
+            date = ""
+            date_selectors = ['time', '.date', '.published', '[datetime]', '.article-date', '.post-date']
+            for selector in date_selectors:
+                date_elem = soup.select_one(selector)
+                if date_elem:
+                    date = date_elem.get_text(strip=True) or date_elem.get('datetime', '')
+                    break
+            
+            if content and len(content) > 50:
+                return {
+                    'title': title,
+                    'content': content,
+                    'link': url,
+                    'date': date,
+                    'source': 'Asian Power'
+                }
+        except Exception as e:
+            print(f"Error scraping Asian Power article {url}: {str(e)}")
         
         return None
     
@@ -414,7 +528,7 @@ class NewsScraper:
         Scrape macro economic/market news from multiple sources.
         
         Args:
-            limit: Maximum number of articles per source (total will be up to 3x limit)
+            limit: Maximum number of articles per source (total will be up to 4x limit)
             
         Returns:
             List of article dictionaries from all sources
@@ -422,15 +536,7 @@ class NewsScraper:
         all_articles = []
         seen_titles = set()
         
-        # Source 1: The Edge Malaysia Economy
-        print("  📰 Scraping The Edge Malaysia...")
-        edge_articles = self.scrape_articles("https://theedgemalaysia.com/categories/economy", limit=limit)
-        for article in edge_articles:
-            if article['title'] not in seen_titles:
-                all_articles.append(article)
-                seen_titles.add(article['title'])
-        
-        # Source 2: KLSE Screener
+        # Source 1: KLSE Screener
         print("  📰 Scraping KLSE Screener...")
         klse_articles = self.scrape_klse_news(limit=limit)
         for article in klse_articles:
@@ -438,49 +544,58 @@ class NewsScraper:
                 all_articles.append(article)
                 seen_titles.add(article['title'])
         
-        # Source 3: NST Economy
-        print("  📰 Scraping New Straits Times Economy...")
-        nst_articles = self.scrape_nst_economy_news(limit=limit)
-        for article in nst_articles:
-            if article['title'] not in seen_titles:
-                all_articles.append(article)
-                seen_titles.add(article['title'])
-        
-        return all_articles[:limit * 3]  # Return up to 3x limit from all sources
-    
-    def scrape_sector_news(self, sector: str, limit: int = 20) -> List[Dict]:
-        """
-        Scrape sector-specific news from multiple sources.
-        
-        Args:
-            sector: Sector name (e.g., 'technology', 'finance', 'healthcare')
-            limit: Maximum number of articles per source
-            
-        Returns:
-            List of article dictionaries filtered by sector
-        """
-        # Map sectors to potential keywords
-        sector_keywords = {
-            'technology': ['tech', 'digital', 'technology', 'software', 'ai', 'ict', 'telecom', 'cloud', 'data'],
-            'finance': ['bank', 'finance', 'financial', 'banking', 'investment', 'lender', 'credit', 'epf', 'fund'],
-            'healthcare': ['health', 'medical', 'pharmaceutical', 'hospital', 'clinic', 'healthcare', 'biotech'],
-            'energy': ['energy', 'oil', 'gas', 'petroleum', 'renewable', 'power', 'electricity', 'petronas'],
-            'consumer': ['retail', 'consumer', 'f&b', 'food', 'beverage', 'shopping', 'mall', 'retailer'],
-            'industrial': ['industrial', 'manufacturing', 'construction', 'factory', 'production', 'infrastructure']
-        }
-        
-        all_articles = []
-        seen_titles = set()
-        
-        # Source 1: The Edge Malaysia Economy
-        print(f"  📰 Scraping The Edge Malaysia for {sector} sector...")
-        edge_articles = self.scrape_articles("https://theedgemalaysia.com/categories/economy", limit=limit * 2)
+        # Source 2: The Edge Malaysia OIL & GAS
+        print("  📰 Scraping The Edge Malaysia OIL & GAS...")
+        edge_articles = self.scrape_articles("https://theedgemalaysia.com/flash-categories/OIL%20%26%20GAS", limit=limit)
         for article in edge_articles:
             if article['title'] not in seen_titles:
                 all_articles.append(article)
                 seen_titles.add(article['title'])
         
-        # Source 2: KLSE Screener
+        # Source 3: The Star Energy
+        print("  📰 Scraping The Star Energy...")
+        thestar_articles = self.scrape_thestar_energy_news(limit=limit)
+        for article in thestar_articles:
+            if article['title'] not in seen_titles:
+                all_articles.append(article)
+                seen_titles.add(article['title'])
+        
+        # Source 4: Asian Power Malaysia
+        print("  📰 Scraping Asian Power Malaysia...")
+        asian_power_articles = self.scrape_asian_power_news(limit=limit)
+        for article in asian_power_articles:
+            if article['title'] not in seen_titles:
+                all_articles.append(article)
+                seen_titles.add(article['title'])
+        
+        return all_articles[:limit * 4]  # Return up to 4x limit from all sources
+    
+    def scrape_sector_news(self, sector: str, limit: int = 20) -> List[Dict]:
+        """
+        Scrape sector-specific news from multiple sources.
+        Focuses on energy sector only.
+        
+        Args:
+            sector: Sector name (should be 'energy')
+            limit: Maximum number of articles per source
+            
+        Returns:
+            List of article dictionaries filtered by energy sector keywords
+        """
+        # Energy sector keywords (comprehensive list for energy industry)
+        energy_keywords = [
+            'energy', 'oil', 'gas', 'petroleum', 'renewable', 'power', 'electricity', 
+            'petronas', 'crude', 'refinery', 'drilling', 'offshore', 'onshore',
+            'lng', 'lpg', 'natural gas', 'petrol', 'diesel', 'fuel', 'energy sector',
+            'oil & gas', 'oil and gas', 'upstream', 'downstream', 'midstream',
+            'petrochemical', 'energy transition', 'solar', 'wind', 'hydroelectric',
+            'wasco', 'deleum', 'dayang', 'keyfield', 'energy company', 'energy firm'
+        ]
+        
+        all_articles = []
+        seen_titles = set()
+        
+        # Source 1: KLSE Screener
         print(f"  📰 Scraping KLSE Screener for {sector} sector...")
         klse_articles = self.scrape_klse_news(limit=limit * 2)
         for article in klse_articles:
@@ -488,24 +603,39 @@ class NewsScraper:
                 all_articles.append(article)
                 seen_titles.add(article['title'])
         
-        # Source 3: NST Economy
-        print(f"  📰 Scraping New Straits Times Economy for {sector} sector...")
-        nst_articles = self.scrape_nst_economy_news(limit=limit * 2)
-        for article in nst_articles:
+        # Source 2: The Edge Malaysia OIL & GAS
+        print(f"  📰 Scraping The Edge Malaysia OIL & GAS for {sector} sector...")
+        edge_articles = self.scrape_articles("https://theedgemalaysia.com/flash-categories/OIL%20%26%20GAS", limit=limit * 2)
+        for article in edge_articles:
             if article['title'] not in seen_titles:
                 all_articles.append(article)
                 seen_titles.add(article['title'])
         
-        # Filter articles by sector keywords
-        keywords = sector_keywords.get(sector.lower(), [sector.lower()])
+        # Source 3: The Star Energy
+        print(f"  📰 Scraping The Star Energy for {sector} sector...")
+        thestar_articles = self.scrape_thestar_energy_news(limit=limit * 2)
+        for article in thestar_articles:
+            if article['title'] not in seen_titles:
+                all_articles.append(article)
+                seen_titles.add(article['title'])
+        
+        # Source 4: Asian Power Malaysia
+        print(f"  📰 Scraping Asian Power Malaysia for {sector} sector...")
+        asian_power_articles = self.scrape_asian_power_news(limit=limit * 2)
+        for article in asian_power_articles:
+            if article['title'] not in seen_titles:
+                all_articles.append(article)
+                seen_titles.add(article['title'])
+        
+        # Filter articles by energy keywords (always use energy keywords)
         filtered_articles = []
         
         for article in all_articles:
             title_lower = article['title'].lower()
             content_lower = article['content'].lower()
             
-            # Check if article mentions sector keywords
-            if any(keyword in title_lower or keyword in content_lower for keyword in keywords):
+            # Check if article mentions energy keywords
+            if any(keyword in title_lower or keyword in content_lower for keyword in energy_keywords):
                 filtered_articles.append(article)
                 if len(filtered_articles) >= limit:
                     break

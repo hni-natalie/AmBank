@@ -12,7 +12,7 @@ interface GuidedChatProps {
 
 const timeHorizons = ['short', 'medium', 'long'];
 const riskLevels = ['conservative', 'balanced', 'aggressive'];
-const availableSectors = ['technology', 'finance', 'healthcare', 'energy', 'consumer', 'industrial'];
+const availableSectors = ['energy']; // Only energy sector supported
 
 const timeHorizonDescriptions: { [key: string]: string } = {
   short: 'less than 1 year',

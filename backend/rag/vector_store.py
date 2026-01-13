@@ -1,18 +1,24 @@
 """Enhanced vector store with FAISS for fast similarity search."""
 import numpy as np
 import faiss
+import os
+import json
+import pickle
 from typing import List, Dict, Optional
+from pathlib import Path
 
 
 class VectorStore:
-    """In-memory vector store with FAISS for fast similarity search."""
+    """Vector store with FAISS for fast similarity search, with optional persistence."""
     
-    def __init__(self, dimension: Optional[int] = None):
+    def __init__(self, dimension: Optional[int] = None, persist: bool = False, db_path: Optional[str] = None):
         """
         Initialize FAISS vector store.
         
         Args:
             dimension: Embedding dimension (auto-detected from first vector if None)
+            persist: Whether to persist the vector database to disk
+            db_path: Path to store the vector database (required if persist=True)
         """
         self.dimension = dimension
         self.index: Optional[faiss.Index] = None
@@ -20,6 +26,11 @@ class VectorStore:
         self.id_to_index: Dict[str, int] = {}
         self.index_to_id: Dict[int, str] = {}
         self._next_id = 0
+        self.persist = persist
+        self.db_path = db_path
+        
+        if persist and db_path:
+            self._load_from_disk()
     
     def _ensure_index(self, dimension: int):
         """
@@ -71,6 +82,10 @@ class VectorStore:
         self.id_to_index[vector_id] = index_pos
         self.index_to_id[index_pos] = vector_id
         self._next_id += 1
+        
+        # Auto-save if persistence is enabled
+        if self.persist:
+            self.save_to_disk()
         
         return vector_id
     
@@ -146,10 +161,98 @@ class VectorStore:
         self.index_to_id = {}
         self._next_id = 0
         self.dimension = None
+        
+        # Remove persisted files if they exist
+        if self.persist and self.db_path and os.path.exists(self.db_path):
+            try:
+                index_path = os.path.join(self.db_path, "index.faiss")
+                metadata_path = os.path.join(self.db_path, "metadata.json")
+                mappings_path = os.path.join(self.db_path, "mappings.json")
+                
+                if os.path.exists(index_path):
+                    os.remove(index_path)
+                if os.path.exists(metadata_path):
+                    os.remove(metadata_path)
+                if os.path.exists(mappings_path):
+                    os.remove(mappings_path)
+            except Exception as e:
+                print(f"Warning: Could not remove persisted files: {e}")
     
     def size(self) -> int:
         """Get number of vectors in store."""
         if self.index is None:
             return 0
         return self.index.ntotal
+    
+    def save_to_disk(self):
+        """Save vector store to disk."""
+        if not self.persist or not self.db_path:
+            return
+        
+        # Create directory if it doesn't exist
+        Path(self.db_path).mkdir(parents=True, exist_ok=True)
+        
+        # Save FAISS index
+        if self.index is not None:
+            index_path = os.path.join(self.db_path, "index.faiss")
+            faiss.write_index(self.index, index_path)
+        
+        # Save metadata and mappings
+        metadata_path = os.path.join(self.db_path, "metadata.json")
+        mappings_path = os.path.join(self.db_path, "mappings.json")
+        
+        with open(metadata_path, 'w', encoding='utf-8') as f:
+            json.dump(self.metadata, f, ensure_ascii=False, indent=2)
+        
+        mappings_data = {
+            'id_to_index': self.id_to_index,
+            'index_to_id': {str(k): v for k, v in self.index_to_id.items()},  # Convert int keys to str for JSON
+            'next_id': self._next_id,
+            'dimension': self.dimension
+        }
+        
+        with open(mappings_path, 'w', encoding='utf-8') as f:
+            json.dump(mappings_data, f, ensure_ascii=False, indent=2)
+    
+    def _load_from_disk(self):
+        """Load vector store from disk."""
+        if not self.db_path or not os.path.exists(self.db_path):
+            return
+        
+        index_path = os.path.join(self.db_path, "index.faiss")
+        metadata_path = os.path.join(self.db_path, "metadata.json")
+        mappings_path = os.path.join(self.db_path, "mappings.json")
+        
+        # Load FAISS index
+        if os.path.exists(index_path):
+            try:
+                self.index = faiss.read_index(index_path)
+            except Exception as e:
+                print(f"Warning: Could not load FAISS index: {e}")
+                self.index = None
+        
+        # Load metadata
+        if os.path.exists(metadata_path):
+            try:
+                with open(metadata_path, 'r', encoding='utf-8') as f:
+                    self.metadata = json.load(f)
+            except Exception as e:
+                print(f"Warning: Could not load metadata: {e}")
+                self.metadata = []
+        
+        # Load mappings
+        if os.path.exists(mappings_path):
+            try:
+                with open(mappings_path, 'r', encoding='utf-8') as f:
+                    mappings_data = json.load(f)
+                    self.id_to_index = mappings_data.get('id_to_index', {})
+                    # Convert str keys back to int for index_to_id
+                    self.index_to_id = {int(k): v for k, v in mappings_data.get('index_to_id', {}).items()}
+                    self._next_id = mappings_data.get('next_id', 0)
+                    self.dimension = mappings_data.get('dimension', None)
+            except Exception as e:
+                print(f"Warning: Could not load mappings: {e}")
+                self.id_to_index = {}
+                self.index_to_id = {}
+                self._next_id = 0
 

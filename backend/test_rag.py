@@ -94,10 +94,10 @@ def main():
         import traceback
         traceback.print_exc()
     
-    # Test Micro News Agent (for each sector)
+    # Test Micro News Agent (energy sector only)
     print_section("MICRO NEWS AGENT")
     
-    sectors = ['technology', 'finance', 'healthcare']
+    sectors = ['energy']  # Only energy sector supported
     
     for sector in sectors:
         print(f"\n🔍 Analyzing {sector.upper()} sector...")

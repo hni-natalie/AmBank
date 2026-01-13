@@ -42,11 +42,21 @@ Answer based on the context above:"""
         else:
             full_prompt = prompt
         
-        # Prepare request payload
+        # Prepare request payload with deterministic settings
+        # Default to low temperature for consistency if not specified
+        options = kwargs.pop('options', {})
+        if 'temperature' not in options:
+            options['temperature'] = 0.1  # Low temperature for consistency
+        if 'top_p' not in options:
+            options['top_p'] = 0.9  # Consistent sampling
+        if 'seed' not in options:
+            options['seed'] = 42  # Fixed seed for deterministic output
+        
         payload = {
             "model": self.model,
             "prompt": full_prompt,
             "stream": False,
+            "options": options,
             **kwargs
         }
         

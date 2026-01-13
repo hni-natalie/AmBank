@@ -57,17 +57,40 @@ class CompanyIdentifier:
     def _extract_company_name(self, user_input: str) -> Optional[str]:
         """
         Extract company name from user input using pattern matching.
+        Only supports energy companies: WASCO, DELEUM, DAYANG, KEYFIELD.
         
         Args:
             user_input: User's input text
             
         Returns:
-            Company name or None
+            Company name (WASCO, DELEUM, DAYANG, or KEYFIELD) or None
         """
-        # Simple pattern matching (faster and more reliable than RAG for this)
+        # Supported energy companies
+        supported_companies = {
+            'wasco': 'WASCO',
+            'deleum': 'DELEUM',
+            'dayang': 'DAYANG',
+            'keyfield': 'KEYFIELD'
+        }
+        
         user_lower = user_input.lower()
         
-        # Common patterns for investment queries
+        # Check for direct mentions of supported companies
+        for key, company in supported_companies.items():
+            if key in user_lower:
+                return company
+        
+        # Check for ticker format
+        if 'wasco' in user_lower or 'wasco.kl' in user_lower:
+            return 'WASCO'
+        if 'deleum' in user_lower or 'deleum.kl' in user_lower:
+            return 'DELEUM'
+        if 'dayang' in user_lower or 'dayang.kl' in user_lower:
+            return 'DAYANG'
+        if 'keyfield' in user_lower or 'keyfield.kl' in user_lower:
+            return 'KEYFIELD'
+        
+        # Try pattern matching
         patterns = [
             'invest in',
             'buy',
@@ -80,31 +103,17 @@ class CompanyIdentifier:
             'interested in'
         ]
         
-        # Try to extract company name
         for pattern in patterns:
             if pattern in user_lower:
-                # Extract text after pattern
                 idx = user_lower.find(pattern)
                 after_pattern = user_input[idx + len(pattern):].strip()
-                # Take first few words (company names are usually 1-3 words)
-                words = after_pattern.split()[:3]  # Max 3 words for company name
+                words = after_pattern.split()[:3]
                 if words:
-                    potential_name = ' '.join(words)
-                    # Clean up punctuation
-                    potential_name = potential_name.rstrip('.,!?;:')
-                    if len(potential_name) > 2:
-                        return potential_name
-        
-        # If no pattern found, try direct extraction
-        # Remove common words and see what's left
-        stop_words = ['i', 'want', 'to', 'invest', 'in', 'buy', 'stock', 'shares', 'of', 'the', 'a', 'an']
-        words = [w for w in user_input.split() if w.lower() not in stop_words]
-        
-        if words:
-            # Take first 1-3 words as potential company name
-            potential_name = ' '.join(words[:3]).strip('.,!?;:')
-            if len(potential_name) > 2:
-                return potential_name
+                    potential_name = ' '.join(words).rstrip('.,!?;:').lower()
+                    # Check if it matches a supported company
+                    for key, company in supported_companies.items():
+                        if key in potential_name:
+                            return company
         
         return None
 

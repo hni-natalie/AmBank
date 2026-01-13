@@ -1,16 +1,27 @@
 """Micro news agent - scrapes sector-specific news, builds vector DB, and generates signals."""
-from typing import Dict, List
+from typing import Dict, List, Optional
 from scraper.news_scraper import NewsScraper
 from rag.rag_system import RAGSystem
+import hashlib
 
 
 class MicroNewsAgent:
     """Agent for sector-specific news analysis."""
     
-    def __init__(self):
-        """Initialize micro news agent."""
+    def __init__(self, persist: bool = False, db_path: Optional[str] = None):
+        """
+        Initialize micro news agent.
+        
+        Args:
+            persist: Whether to persist vector database to disk
+            db_path: Path to store vector database (required if persist=True)
+        """
         self.scraper = NewsScraper()
-        self.rag = RAGSystem()
+        self.rag = RAGSystem(persist=persist, db_path=db_path)
+        # Cache for articles (key: ticker_hash, value: articles list)
+        self._article_cache: Dict[str, List[Dict]] = {}
+        self.persist = persist
+        self.db_path = db_path
         self.rag_prompt = """Based on the following news articles about the {sector} sector in Malaysia, analyze whether investors should BUY, SELL, or HOLD stocks in this sector.
 
 Context from recent news:
@@ -20,7 +31,7 @@ Question: Given the current conditions in the {sector} sector described in the n
 
 Answer:"""
     
-    def generate_signal(self, ticker: str = None, company_name: str = None, sector: str = None, limit: int = 20) -> Dict:
+    def generate_signal(self, ticker: str = None, company_name: str = None, sector: str = None, limit: int = 20, use_cache: bool = True) -> Dict:
         """
         Generate micro signal by scraping company-specific news, building vector DB, and querying RAG.
         
@@ -29,20 +40,34 @@ Answer:"""
             company_name: Company name (e.g., "Ambank") - for filtering company-specific news
             sector: Sector name (e.g., 'technology', 'finance') - fallback if no ticker/company
             limit: Maximum number of articles to scrape
+            use_cache: Whether to use cached articles for consistency testing
             
         Returns:
             Dictionary with signal, confidence, summary, and details
         """
-        # Step 1: Scrape news
-        if ticker or company_name:
-            # Scrape all news and filter for company-specific
-            print(f"📰 Scraping company-specific news for {ticker or company_name} (limit: {limit})...")
-            articles = self.scraper.scrape_macro_news(limit=limit * 2)  # Get more to filter
-            articles = self._filter_articles_by_company(articles, ticker, company_name)
+        # Step 1: Scrape news (with caching for consistency)
+        cache_key = self._get_cache_key(ticker, company_name, sector, limit)
+        
+        if use_cache and cache_key in self._article_cache:
+            print(f"📰 Using cached articles (limit: {limit})...")
+            articles = self._article_cache[cache_key]
         else:
-            # Fallback to sector news
-            print(f"📰 Scraping {sector} sector news (limit: {limit})...")
-            articles = self.scraper.scrape_sector_news(sector, limit=limit)
+            if ticker or company_name:
+                # Scrape all news and filter for company-specific
+                print(f"📰 Scraping company-specific news for {ticker or company_name} (limit: {limit})...")
+                articles = self.scraper.scrape_macro_news(limit=limit * 2)  # Get more to filter
+                articles = self._filter_articles_by_company(articles, ticker, company_name)
+            else:
+                # Fallback to sector news
+                print(f"📰 Scraping {sector} sector news (limit: {limit})...")
+                articles = self.scraper.scrape_sector_news(sector, limit=limit)
+            
+            # Sort articles consistently by title for deterministic processing
+            articles = sorted(articles, key=lambda x: x.get('title', '').lower())
+            
+            # Cache articles for consistency
+            if use_cache:
+                self._article_cache[cache_key] = articles
         
         if not articles:
             return {
@@ -128,7 +153,10 @@ TREND_SIGNALS:
             query=query,
             top_k=min(5, len(documents)),  # Don't ask for more than we have
             min_score=0.2,  # Lower threshold
-            include_context=True
+            include_context=True,
+            temperature=0.1,  # Low temperature for consistency
+            top_p=0.9,  # Consistent sampling
+            seed=42  # Fixed seed for deterministic output
         )
         
         print(f"📊 Retrieved {result['retrieved_count']} relevant documents from vector store")
@@ -256,11 +284,12 @@ TREND_SIGNALS:
     def _filter_articles_by_company(self, articles: List[Dict], ticker: str = None, company_name: str = None) -> List[Dict]:
         """
         Filter articles by company ticker or name.
+        Only supports energy companies: WASCO, DELEUM, DAYANG, KEYFIELD.
         
         Args:
             articles: List of article dictionaries
-            ticker: Stock ticker (e.g., "AMBANK.KL")
-            company_name: Company name (e.g., "Ambank")
+            ticker: Stock ticker (e.g., "WASCO.KL", "DELEUM.KL", "DAYANG.KL", "KEYFIELD.KL")
+            company_name: Company name (e.g., "Wasco", "Deleum", "Dayang", "Keyfield")
             
         Returns:
             Filtered list of articles
@@ -270,19 +299,28 @@ TREND_SIGNALS:
         
         filtered = []
         ticker_code = ticker.replace('.KL', '').upper() if ticker else None
-        company_lower = company_name.lower() if company_name else None
         
-        # Company name variations
+        # Only process if it's one of the supported energy companies
+        supported_companies = ['WASCO', 'DELEUM', 'DAYANG', 'KEYFIELD']
+        if ticker_code and ticker_code not in supported_companies:
+            return []  # Return empty if not a supported company
+        
+        # Company name variations for energy companies
         company_variations = []
         if company_name:
             company_variations.append(company_name.lower())
-            # Add common variations
-            if 'bank' in company_lower:
-                company_variations.append(company_lower.replace(' bank', ''))
-                company_variations.append(company_lower.replace('bank', ''))
         
         if ticker_code:
             company_variations.append(ticker_code.lower())
+            # Add full company names
+            if ticker_code == 'WASCO':
+                company_variations.extend(['wasco energy', 'wasco energy group'])
+            elif ticker_code == 'DELEUM':
+                company_variations.extend(['deleum berhad', 'deleum group'])
+            elif ticker_code == 'DAYANG':
+                company_variations.extend(['dayang enterprise', 'dayang enterprise holdings', 'dayang holdings'])
+            elif ticker_code == 'KEYFIELD':
+                company_variations.extend(['keyfield berhad', 'keyfield group'])
         
         for article in articles:
             title_lower = article.get('title', '').lower()
@@ -354,9 +392,29 @@ TREND_SIGNALS:
             for context in context_texts[:3]:  # Analyze top 3 contexts
                 context_lower = context.lower()
                 # Simple keyword-based categorization
-                positive_keywords = ['growth', 'increase', 'profit', 'gain', 'positive', 'strong', 'improve', 'rise', 'up']
-                adverse_keywords = ['decline', 'decrease', 'loss', 'negative', 'weak', 'fall', 'down', 'risk', 'concern']
-                trend_keywords = ['trend', 'pattern', 'continue', 'ongoing', 'maintain', 'stable']
+                positive_keywords = [
+                    'growth', 'supply', 'demand', 'increase', 'profit', 'gain', 
+                    'positive', 'strong', 'improve', 'rise', 'up',
+                    'capacity expansion', 'renewable adoption', 'solar', 'wind', 
+                    'efficiency', 'investment', 'grid upgrade', 'project award', 
+                    'production increase', 'output growth', 'sales growth'
+                ]
+                
+                adverse_keywords = [
+                    'decline', 'decrease', 'loss', 'negative', 'weak', 'fall', 
+                    'down', 'risk', 'concern',
+                    'supply shortage', 'blackout', 'project delay', 'cost overrun', 
+                    'regulatory risk', 'penalty', 'fine', 'shutdown', 'emission violation', 
+                    'price drop', 'fuel shortage'
+                ]
+                
+                trend_keywords = [
+                    'trend', 'pattern', 'continue', 'ongoing', 'maintain', 'stable',
+                    'energy transition', 'decarbonisation', 'renewable growth', 'policy shift',
+                    'technology adoption', 'demand pattern', 'price trend', 'capacity trend', 
+                    'long-term plan', 'strategic move', 'market outlook'
+                ]
+
                 
                 pos_count = sum(1 for kw in positive_keywords if kw in context_lower)
                 adv_count = sum(1 for kw in adverse_keywords if kw in context_lower)
@@ -374,6 +432,15 @@ TREND_SIGNALS:
                         trend_signals.append(signal_text)
         
         return positive_signals[:5], adverse_signals[:5], trend_signals[:5]  # Max 5 each
+    
+    def _get_cache_key(self, ticker: Optional[str], company_name: Optional[str], sector: Optional[str], limit: int) -> str:
+        """Generate cache key for articles."""
+        key_data = f"{ticker or ''}_{company_name or ''}_{sector or ''}_{limit}"
+        return hashlib.md5(key_data.encode()).hexdigest()
+    
+    def clear_cache(self):
+        """Clear article cache."""
+        self._article_cache.clear()
     
     def clear(self):
         """Clear RAG system."""

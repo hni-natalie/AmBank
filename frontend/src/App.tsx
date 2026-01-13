@@ -1,4 +1,7 @@
 import { Routes, Route } from 'react-router-dom';
+import { LandingPage } from './pages/LandingPage';
+import { CompanyResultPage } from './pages/CompanyResultPage';
+import { ComparePeersPage } from './pages/ComparePeersPage';
 import { HomePage } from './pages/HomePage';
 import { NewsPage } from './pages/NewsPage';
 import { CompaniesPage } from './pages/CompaniesPage';
@@ -10,7 +13,12 @@ import { FinalListPage } from './pages/FinalListPage';
 function App() {
   return (
     <Routes>
-      <Route path="/" element={<HomePage />} />
+      <Route path="/" element={<LandingPage />} />
+      <Route path="/home" element={<HomePage />} />
+      <Route path="/assess" element={<LandingPage />} />
+      <Route path="/result/:jobId" element={<CompanyResultPage />} />
+      <Route path="/compare/:jobId" element={<ComparePeersPage />} />
+      <Route path="/monitor" element={<div>Watchlist monitor page (to be implemented)</div>} />
       <Route path="/news" element={<NewsPage />} />
       <Route path="/companies" element={<CompaniesPage />} />
       <Route path="/final" element={<FinalListPage />} />

@@ -1,5 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
+import { SignalCard } from '../components/SignalCard';
+import { NotionAI } from '../components/NotionAI';
+import { FloatingAIButton } from '../components/FloatingAIButton';
 
 
 interface CompanyInfo {
@@ -41,6 +44,7 @@ interface AggregatedAnalysis {
     articles_count: number;
   };
   total_articles_analyzed: number;
+  details?: any[];
 }
 
 interface PeerComparison {
@@ -64,7 +68,7 @@ interface ComparisonData {
 export const DashboardPage: React.FC = () => {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  
+
   // New state for ticker-based analysis
   const [userInput, setUserInput] = useState('');
   const [analyzing, setAnalyzing] = useState(false);
@@ -72,6 +76,17 @@ export const DashboardPage: React.FC = () => {
   const [analysis, setAnalysis] = useState<AggregatedAnalysis | null>(null);
   const [comparison, setComparison] = useState<ComparisonData | null>(null);
   const [loadingComparison, setLoadingComparison] = useState(false);
+
+  // Notion AI state
+  const [aiOpen, setAiOpen] = useState(false);
+  const [aiContext, setAiContext] = useState<{
+    ticker: string;
+    signal: string;
+    signalType: string;
+    details?: any[];
+    analysis?: any;
+    company_name?: string;
+  } | null>(null);
 
   useEffect(() => {
     // Don't auto-fetch on mount - let user input company first
@@ -102,7 +117,7 @@ export const DashboardPage: React.FC = () => {
       }
 
       const data = await response.json();
-      
+
       if (data.error) {
         setError(data.error);
         setCompanyInfo(data.company_info);
@@ -111,7 +126,7 @@ export const DashboardPage: React.FC = () => {
 
       setCompanyInfo(data.company_info);
       setAnalysis(data.analysis);
-      
+
       // Fetch peer comparison if peers are available
       if (data.company_info && data.company_info.peers && data.company_info.peers.length > 0) {
         fetchPeerComparison(data.company_info.ticker, data.company_info.company_name, data.company_info.peers);
@@ -156,33 +171,21 @@ export const DashboardPage: React.FC = () => {
     }
   };
 
-  const getStanceColor = (stance: string) => {
-    const stanceLower = stance.toLowerCase();
-    if (stanceLower.includes('risk_on') || stanceLower.includes('positive')) {
-      return '#10a37f'; // Green
-    } else if (stanceLower.includes('risk_off') || stanceLower.includes('negative')) {
-      return '#ef4444'; // Red
-    } else if (stanceLower.includes('neutral')) {
-      return '#f59e0b'; // Yellow/Orange
-    } else if (stanceLower.includes('error')) {
-      return '#8e8ea0'; // Gray
+  const handleOpenAI = () => {
+    // Set context from current analysis if available
+    if (analysis) {
+      setAiContext({
+        ticker: analysis.ticker || 'UNKNOWN',
+        signal: 'General market analysis',
+        signalType: 'general',
+        details: analysis.details,
+        analysis: analysis, // Include full analysis for "Explain This Insight"
+        company_name: companyInfo?.company_name || analysis.company_name || undefined
+      });
     }
-    return '#8e8ea0';
+    setAiOpen(true);
   };
 
-  const getStanceLabel = (stance: string) => {
-    const stanceLower = stance.toLowerCase();
-    if (stanceLower.includes('risk_on') || stanceLower.includes('positive')) {
-      return 'BUY';
-    } else if (stanceLower.includes('risk_off') || stanceLower.includes('negative')) {
-      return 'SELL';
-    } else if (stanceLower.includes('neutral')) {
-      return 'HOLD';
-    } else if (stanceLower.includes('error')) {
-      return 'ERROR';
-    }
-    return stance.toUpperCase();
-  };
 
   if (loading || analyzing) {
     return (
@@ -442,7 +445,7 @@ export const DashboardPage: React.FC = () => {
                 }}>
                   Bullish
                 </div>
-                
+
                 {/* Sentiment Indicator */}
                 <div style={{
                   position: 'absolute',
@@ -465,8 +468,8 @@ export const DashboardPage: React.FC = () => {
                     color: '#f59e0b',
                     whiteSpace: 'nowrap'
                   }}>
-                    {analysis.signal_strength === 'positive' ? 'BULLISH' : 
-                     analysis.signal_strength === 'adverse' ? 'BEARISH' : 'CAUTIOUS'}
+                    {analysis.signal_strength === 'positive' ? 'BULLISH' :
+                      analysis.signal_strength === 'adverse' ? 'BEARISH' : 'CAUTIOUS'}
                   </div>
                 </div>
               </div>
@@ -474,7 +477,7 @@ export const DashboardPage: React.FC = () => {
           </div>
         )}
 
-        {/* Latest Key Developments */}
+        {/* Market Signals */}
         {analysis && (
           <div style={{
             marginBottom: '40px'
@@ -485,229 +488,109 @@ export const DashboardPage: React.FC = () => {
               gap: '8px',
               marginBottom: '20px'
             }}>
-              <span style={{ fontSize: '20px' }}>⚙️</span>
+              <span style={{ fontSize: '20px' }}>📊</span>
               <h2 style={{
                 fontSize: '20px',
                 fontWeight: '600',
                 margin: 0,
                 color: '#111827'
               }}>
-                Latest Key Developments
+                Market Signals
               </h2>
             </div>
-            
+
+            {/* Signal Counts */}
+            <div style={{
+              display: 'grid',
+              gridTemplateColumns: 'repeat(2, 1fr)',
+              gap: '16px',
+              marginBottom: '24px'
+            }}>
+              {/* Positive Signals Count */}
+              <div style={{
+                backgroundColor: '#d1fae5',
+                borderRadius: '8px',
+                padding: '20px',
+                border: '1px solid #a7f3d0'
+              }}>
+                <div style={{
+                  fontSize: '32px',
+                  fontWeight: '700',
+                  color: '#065f46',
+                  marginBottom: '4px'
+                }}>
+                  {analysis.positive_signals.count}
+                </div>
+                <div style={{
+                  fontSize: '14px',
+                  color: '#047857',
+                  fontWeight: '500'
+                }}>
+                  Positive Signals
+                </div>
+              </div>
+
+              {/* Adverse Signals Count */}
+              <div style={{
+                backgroundColor: '#fee2e2',
+                borderRadius: '8px',
+                padding: '20px',
+                border: '1px solid #fecaca'
+              }}>
+                <div style={{
+                  fontSize: '32px',
+                  fontWeight: '700',
+                  color: '#991b1b',
+                  marginBottom: '4px'
+                }}>
+                  {analysis.adverse_signals.count}
+                </div>
+                <div style={{
+                  fontSize: '14px',
+                  color: '#b91c1c',
+                  fontWeight: '500'
+                }}>
+                  Adverse Signals
+                </div>
+              </div>
+            </div>
+
             <div style={{
               display: 'flex',
               flexDirection: 'column',
               gap: '16px'
             }}>
-              {/* Adverse Signals as CRITICAL/WATCH */}
-              {analysis.adverse_signals.signals.slice(0, 2).map((signal, idx) => {
-                const severity = idx === 0 ? 'CRITICAL' : 'WATCH';
-                const isCritical = severity === 'CRITICAL';
-                return (
-                  <div
-                    key={`adverse-${idx}`}
-                    style={{
-                      backgroundColor: '#ffffff',
-                      borderRadius: '8px',
-                      padding: '20px',
-                      border: `1px solid ${isCritical ? '#fecaca' : '#fef3c7'}`,
-                      display: 'flex',
-                      gap: '16px',
-                      alignItems: 'flex-start'
-                    }}
-                  >
-                    <div style={{
-                      width: '40px',
-                      height: '40px',
-                      borderRadius: '6px',
-                      backgroundColor: isCritical ? '#fee2e2' : '#fef3c7',
-                      display: 'flex',
-                      alignItems: 'center',
-                      justifyContent: 'center',
-                      flexShrink: 0
-                    }}>
-                      {isCritical ? (
-                        <span style={{ fontSize: '20px' }}>📉</span>
-                      ) : (
-                        <span style={{ fontSize: '20px' }}>⚠️</span>
-                      )}
-                    </div>
-                    <div style={{ flex: 1 }}>
-                      <div style={{
-                        display: 'flex',
-                        justifyContent: 'space-between',
-                        alignItems: 'flex-start',
-                        marginBottom: '8px'
-                      }}>
-                        <h3 style={{
-                          fontSize: '16px',
-                          fontWeight: '600',
-                          margin: 0,
-                          color: '#111827'
-                        }}>
-                          {signal.substring(0, 50)}...
-                        </h3>
-                        <span style={{
-                          padding: '4px 12px',
-                          borderRadius: '12px',
-                          backgroundColor: isCritical ? '#fee2e2' : '#fef3c7',
-                          color: isCritical ? '#991b1b' : '#92400e',
-                          fontSize: '12px',
-                          fontWeight: '600'
-                        }}>
-                          {severity}
-                        </span>
-                      </div>
-                      <p style={{
-                        fontSize: '14px',
-                        color: '#4b5563',
-                        margin: '0 0 12px 0',
-                        lineHeight: '1.5'
-                      }}>
-                        {signal}
-                      </p>
-                      <div style={{
-                        display: 'flex',
-                        alignItems: 'center',
-                        gap: '16px',
-                        fontSize: '12px',
-                        color: '#6b7280'
-                      }}>
-                        <div style={{
-                          display: 'flex',
-                          gap: '4px',
-                          alignItems: 'center'
-                        }}>
-                          {[...Array(5)].map((_, i) => (
-                            <div
-                              key={i}
-                              style={{
-                                width: '8px',
-                                height: '8px',
-                                borderRadius: '50%',
-                                backgroundColor: i < 4 ? '#111827' : '#e5e7eb'
-                              }}
-                            />
-                          ))}
-                        </div>
-                        <span>Source: News Analysis</span>
-                        <span>•</span>
-                        <span>Recent</span>
-                      </div>
-                      <p style={{
-                        fontSize: '12px',
-                        color: '#6b7280',
-                        margin: '8px 0 0 0',
-                        fontStyle: 'italic'
-                      }}>
-                        Direct impact on {analysis.sector || 'sector'} performance and competitive positioning
-                      </p>
-                    </div>
-                  </div>
-                );
-              })}
+              {/* Adverse Signals */}
+              {analysis.adverse_signals.signals
+                .filter(signal => signal && signal.toLowerCase() !== 'none' && signal.trim() !== '')
+                .slice(0, 3)
+                .map((signal, idx) => {
+                  const severity = idx === 0 ? 'ADVERSE' : 'WATCH';
+                  return (
+                    <SignalCard
+                      key={`adverse-${idx}`}
+                      signal={signal}
+                      type="adverse"
+                      severity={severity}
+                      ticker={analysis.ticker || "UNKNOWN"}
+                      details={analysis.details}
+                    />
+                  );
+                })}
 
-              {/* Positive Signals as OPPORTUNITY */}
-              {analysis.positive_signals.signals.slice(0, 1).map((signal, idx) => (
-                <div
-                  key={`positive-${idx}`}
-                  style={{
-                    backgroundColor: '#ffffff',
-                    borderRadius: '8px',
-                    padding: '20px',
-                    border: '1px solid #d1fae5',
-                    display: 'flex',
-                    gap: '16px',
-                    alignItems: 'flex-start'
-                  }}
-                >
-                  <div style={{
-                    width: '40px',
-                    height: '40px',
-                    borderRadius: '6px',
-                    backgroundColor: '#d1fae5',
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    flexShrink: 0
-                  }}>
-                    <span style={{ fontSize: '20px' }}>✅</span>
-                  </div>
-                  <div style={{ flex: 1 }}>
-                    <div style={{
-                      display: 'flex',
-                      justifyContent: 'space-between',
-                      alignItems: 'flex-start',
-                      marginBottom: '8px'
-                    }}>
-                      <h3 style={{
-                        fontSize: '16px',
-                        fontWeight: '600',
-                        margin: 0,
-                        color: '#111827'
-                      }}>
-                        {signal.substring(0, 50)}...
-                      </h3>
-                      <span style={{
-                        padding: '4px 12px',
-                        borderRadius: '12px',
-                        backgroundColor: '#d1fae5',
-                        color: '#065f46',
-                        fontSize: '12px',
-                        fontWeight: '600'
-                      }}>
-                        OPPORTUNITY
-                      </span>
-                    </div>
-                    <p style={{
-                      fontSize: '14px',
-                      color: '#4b5563',
-                      margin: '0 0 12px 0',
-                      lineHeight: '1.5'
-                    }}>
-                      {signal}
-                    </p>
-                    <div style={{
-                      display: 'flex',
-                      alignItems: 'center',
-                      gap: '16px',
-                      fontSize: '12px',
-                      color: '#6b7280'
-                    }}>
-                      <div style={{
-                        display: 'flex',
-                        gap: '4px',
-                        alignItems: 'center'
-                      }}>
-                        {[...Array(5)].map((_, i) => (
-                          <div
-                            key={i}
-                            style={{
-                              width: '8px',
-                              height: '8px',
-                              borderRadius: '50%',
-                              backgroundColor: i < 3 ? '#111827' : '#e5e7eb'
-                            }}
-                          />
-                        ))}
-                      </div>
-                      <span>Source: News Analysis</span>
-                      <span>•</span>
-                      <span>Recent</span>
-                    </div>
-                    <p style={{
-                      fontSize: '12px',
-                      color: '#6b7280',
-                      margin: '8px 0 0 0',
-                      fontStyle: 'italic'
-                    }}>
-                      Could offset concerns and support growth in {analysis.sector || 'sector'}
-                    </p>
-                  </div>
-                </div>
-              ))}
+              {/* Positive Signals */}
+              {analysis.positive_signals.signals
+                .filter(signal => signal && signal.toLowerCase() !== 'none' && signal.trim() !== '')
+                .slice(0, 3)
+                .map((signal, idx) => (
+                  <SignalCard
+                    key={`positive-${idx}`}
+                    signal={signal}
+                    type="positive"
+                    ticker={analysis.ticker || "UNKNOWN"}
+                    details={analysis.details}
+                  />
+                ))}
             </div>
           </div>
         )}
@@ -720,7 +603,7 @@ export const DashboardPage: React.FC = () => {
             gap: '32px',
             marginBottom: '40px'
           }}>
-            {/* Industry Trends */}
+            {/* Micro Context */}
             <div>
               <div style={{
                 display: 'flex',
@@ -728,20 +611,20 @@ export const DashboardPage: React.FC = () => {
                 gap: '8px',
                 marginBottom: '20px'
               }}>
-                <span style={{ fontSize: '18px' }}>📄</span>
+                <span style={{ fontSize: '18px' }}>🏢</span>
                 <h2 style={{
                   fontSize: '18px',
                   fontWeight: '600',
                   margin: 0,
                   color: '#111827'
                 }}>
-                  Industry Trends
+                  Micro Context
                 </h2>
               </div>
               <div style={{
                 display: 'flex',
                 flexDirection: 'column',
-                gap: '16px'
+                gap: '12px'
               }}>
                 <div style={{
                   display: 'flex',
@@ -775,23 +658,11 @@ export const DashboardPage: React.FC = () => {
                     </span>
                   </div>
                   <div style={{
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: '8px'
-                  }}>
-                    <span style={{
-                      fontSize: '14px',
-                      color: '#111827'
-                    }}>
-                      {analysis.positive_signals.count > analysis.adverse_signals.count ? 'Positive momentum' : 'Mixed signals'}
-                    </span>
-                    <div style={{
-                      width: '8px',
-                      height: '8px',
-                      borderRadius: '50%',
-                      backgroundColor: analysis.positive_signals.count > analysis.adverse_signals.count ? '#10b981' : '#f59e0b'
-                    }} />
-                  </div>
+                    width: '12px',
+                    height: '12px',
+                    borderRadius: '50%',
+                    backgroundColor: analysis.positive_signals.count > analysis.adverse_signals.count ? '#10b981' : '#f59e0b'
+                  }} />
                 </div>
 
                 <div style={{
@@ -826,31 +697,18 @@ export const DashboardPage: React.FC = () => {
                     </span>
                   </div>
                   <div style={{
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: '8px'
-                  }}>
-                    <span style={{
-                      fontSize: '14px',
-                      color: '#111827'
-                    }}>
-                      {analysis.adverse_signals.count > 0 ? 'Intensifying' : 'Stable'}
-                    </span>
-                    <div style={{
-                      width: '8px',
-                      height: '8px',
-                      borderRadius: '50%',
-                      backgroundColor: analysis.adverse_signals.count > 0 ? '#ef4444' : '#10b981'
-                    }} />
-                  </div>
+                    width: '12px',
+                    height: '12px',
+                    borderRadius: '50%',
+                    backgroundColor: analysis.adverse_signals.count > 0 ? '#ef4444' : '#10b981'
+                  }} />
                 </div>
 
                 <div style={{
                   display: 'flex',
                   justifyContent: 'space-between',
                   alignItems: 'center',
-                  padding: '12px 0',
-                  borderBottom: '1px solid #e5e7eb'
+                  padding: '12px 0'
                 }}>
                   <div style={{
                     display: 'flex',
@@ -877,28 +735,16 @@ export const DashboardPage: React.FC = () => {
                     </span>
                   </div>
                   <div style={{
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: '8px'
-                  }}>
-                    <span style={{
-                      fontSize: '14px',
-                      color: '#111827'
-                    }}>
-                      {analysis.signal_strength === 'positive' ? 'Favorable' : analysis.signal_strength === 'adverse' ? 'Challenging' : 'Neutral'}
-                    </span>
-                    <div style={{
-                      width: '8px',
-                      height: '8px',
-                      borderRadius: '50%',
-                      backgroundColor: analysis.signal_strength === 'positive' ? '#10b981' : analysis.signal_strength === 'adverse' ? '#ef4444' : '#f59e0b'
-                    }} />
-                  </div>
+                    width: '12px',
+                    height: '12px',
+                    borderRadius: '50%',
+                    backgroundColor: analysis.signal_strength === 'positive' ? '#10b981' : analysis.signal_strength === 'adverse' ? '#ef4444' : '#f59e0b'
+                  }} />
                 </div>
               </div>
             </div>
 
-            {/* Macro Context */}
+            {/* Macro Context - Simplified Indicators */}
             <div>
               <div style={{
                 display: 'flex',
@@ -919,88 +765,168 @@ export const DashboardPage: React.FC = () => {
               <div style={{
                 display: 'flex',
                 flexDirection: 'column',
-                gap: '16px'
+                gap: '12px'
               }}>
                 <div style={{
+                  display: 'flex',
+                  justifyContent: 'space-between',
+                  alignItems: 'center',
                   padding: '12px 0',
                   borderBottom: '1px solid #e5e7eb'
                 }}>
                   <div style={{
-                    fontSize: '12px',
-                    color: '#6b7280',
-                    marginBottom: '4px'
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '12px'
                   }}>
-                    Interest Rates
+                    <div style={{
+                      width: '32px',
+                      height: '32px',
+                      borderRadius: '4px',
+                      backgroundColor: '#f3f4f6',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center'
+                    }}>
+                      <span>💰</span>
+                    </div>
+                    <span style={{
+                      fontSize: '14px',
+                      color: '#111827',
+                      fontWeight: '500'
+                    }}>
+                      Economic Growth
+                    </span>
                   </div>
                   <div style={{
-                    fontSize: '14px',
-                    color: '#111827',
-                    fontWeight: '500'
-                  }}>
-                    Neutral for {analysis.sector || 'sector'} investments
-                  </div>
+                    width: '12px',
+                    height: '12px',
+                    borderRadius: '50%',
+                    backgroundColor: '#f59e0b'
+                  }} />
                 </div>
 
                 <div style={{
+                  display: 'flex',
+                  justifyContent: 'space-between',
+                  alignItems: 'center',
                   padding: '12px 0',
                   borderBottom: '1px solid #e5e7eb'
                 }}>
                   <div style={{
-                    fontSize: '12px',
-                    color: '#6b7280',
-                    marginBottom: '4px'
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '12px'
                   }}>
-                    Economic Conditions
+                    <div style={{
+                      width: '32px',
+                      height: '32px',
+                      borderRadius: '4px',
+                      backgroundColor: '#f3f4f6',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center'
+                    }}>
+                      <span>💼</span>
+                    </div>
+                    <span style={{
+                      fontSize: '14px',
+                      color: '#111827',
+                      fontWeight: '500'
+                    }}>
+                      Market Saturation
+                    </span>
                   </div>
                   <div style={{
-                    fontSize: '14px',
-                    color: '#111827',
-                    fontWeight: '500'
-                  }}>
-                    {analysis.macro_analysis.summary.substring(0, 60)}...
-                  </div>
+                    width: '12px',
+                    height: '12px',
+                    borderRadius: '50%',
+                    backgroundColor: analysis.adverse_signals.count > 0 ? '#ef4444' : '#10b981'
+                  }} />
                 </div>
 
                 <div style={{
-                  padding: '12px 0',
-                  borderBottom: '1px solid #e5e7eb'
-                }}>
-                  <div style={{
-                    fontSize: '12px',
-                    color: '#6b7280',
-                    marginBottom: '4px'
-                  }}>
-                    Market Sentiment
-                  </div>
-                  <div style={{
-                    fontSize: '14px',
-                    color: '#111827',
-                    fontWeight: '500'
-                  }}>
-                    {analysis.signal_strength === 'positive' ? 'Bullish' : analysis.signal_strength === 'adverse' ? 'Bearish' : 'Cautious'}
-                  </div>
-                </div>
-
-                <div style={{
+                  display: 'flex',
+                  justifyContent: 'space-between',
+                  alignItems: 'center',
                   padding: '12px 0'
                 }}>
                   <div style={{
-                    fontSize: '12px',
-                    color: '#6b7280',
-                    marginBottom: '4px'
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '12px'
                   }}>
-                    Policy Environment
+                    <div style={{
+                      width: '32px',
+                      height: '32px',
+                      borderRadius: '4px',
+                      backgroundColor: '#f3f4f6',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center'
+                    }}>
+                      <span>📊</span>
+                    </div>
+                    <span style={{
+                      fontSize: '14px',
+                      color: '#111827',
+                      fontWeight: '500'
+                    }}>
+                      Economic Conditions
+                    </span>
                   </div>
                   <div style={{
-                    fontSize: '14px',
-                    color: '#111827',
-                    fontWeight: '500'
-                  }}>
-                    {analysis.positive_signals.count > analysis.adverse_signals.count ? 'Supportive' : 'Mixed'}
-                  </div>
+                    width: '12px',
+                    height: '12px',
+                    borderRadius: '50%',
+                    backgroundColor: analysis.signal_strength === 'positive' ? '#10b981' : analysis.signal_strength === 'adverse' ? '#ef4444' : '#f59e0b'
+                  }} />
                 </div>
               </div>
             </div>
+          </div>
+        )}
+
+        {/* Peer Comparison Button */}
+        {analysis && !comparison && !loadingComparison && companyInfo && companyInfo.peers && companyInfo.peers.length > 0 && (
+          <div style={{
+            marginTop: '40px',
+            textAlign: 'center'
+          }}>
+            <button
+              onClick={() => {
+                if (companyInfo) {
+                  setLoadingComparison(true);
+                  fetchPeerComparison(
+                    companyInfo.company_name || '',
+                    companyInfo.ticker || '',
+                    companyInfo.peers
+                  );
+                }
+              }}
+              style={{
+                padding: '12px 24px',
+                backgroundColor: '#111827',
+                color: '#ffffff',
+                border: 'none',
+                borderRadius: '8px',
+                fontSize: '14px',
+                fontWeight: '600',
+                cursor: 'pointer',
+                boxShadow: '0 2px 4px rgba(0,0,0,0.1)',
+                transition: 'all 0.2s'
+              }}
+              onMouseEnter={(e) => {
+                e.currentTarget.style.backgroundColor = '#374151';
+                e.currentTarget.style.boxShadow = '0 4px 8px rgba(0,0,0,0.15)';
+              }}
+              onMouseLeave={(e) => {
+                e.currentTarget.style.backgroundColor = '#111827';
+                e.currentTarget.style.boxShadow = '0 2px 4px rgba(0,0,0,0.1)';
+              }}
+            >
+              📊 Compare with Peers
+            </button>
           </div>
         )}
 
@@ -1060,10 +986,10 @@ export const DashboardPage: React.FC = () => {
                   <span style={{
                     padding: '4px 12px',
                     borderRadius: '12px',
-                    backgroundColor: comparison.main_company.overall_stance === 'positive' ? '#d1fae5' : 
-                                   comparison.main_company.overall_stance === 'negative' ? '#fee2e2' : '#fef3c7',
-                    color: comparison.main_company.overall_stance === 'positive' ? '#065f46' : 
-                           comparison.main_company.overall_stance === 'negative' ? '#991b1b' : '#92400e',
+                    backgroundColor: comparison.main_company.overall_stance === 'positive' ? '#d1fae5' :
+                      comparison.main_company.overall_stance === 'negative' ? '#fee2e2' : '#fef3c7',
+                    color: comparison.main_company.overall_stance === 'positive' ? '#065f46' :
+                      comparison.main_company.overall_stance === 'negative' ? '#991b1b' : '#92400e',
                     fontSize: '12px',
                     fontWeight: '600'
                   }}>
@@ -1150,10 +1076,10 @@ export const DashboardPage: React.FC = () => {
                     <span style={{
                       padding: '4px 12px',
                       borderRadius: '12px',
-                      backgroundColor: peer.overall_stance === 'positive' ? '#d1fae5' : 
-                                     peer.overall_stance === 'negative' ? '#fee2e2' : '#fef3c7',
-                      color: peer.overall_stance === 'positive' ? '#065f46' : 
-                             peer.overall_stance === 'negative' ? '#991b1b' : '#92400e',
+                      backgroundColor: peer.overall_stance === 'positive' ? '#d1fae5' :
+                        peer.overall_stance === 'negative' ? '#fee2e2' : '#fef3c7',
+                      color: peer.overall_stance === 'positive' ? '#065f46' :
+                        peer.overall_stance === 'negative' ? '#991b1b' : '#92400e',
                       fontSize: '12px',
                       fontWeight: '600'
                     }}>
@@ -1232,6 +1158,16 @@ export const DashboardPage: React.FC = () => {
             Comparing with peers...
           </div>
         )}
+
+        {/* Floating AI Button */}
+        <FloatingAIButton onClick={handleOpenAI} />
+
+        {/* Notion AI Panel */}
+        <NotionAI
+          isOpen={aiOpen}
+          onClose={() => setAiOpen(false)}
+          context={aiContext}
+        />
       </div>
     </div>
   );

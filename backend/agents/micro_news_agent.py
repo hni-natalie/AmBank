@@ -36,9 +36,9 @@ Answer:"""
         Generate micro signal by scraping company-specific news, building vector DB, and querying RAG.
         
         Args:
-            ticker: Stock ticker (e.g., "AMBANK.KL") - for filtering company-specific news
-            company_name: Company name (e.g., "Ambank") - for filtering company-specific news
-            sector: Sector name (e.g., 'technology', 'finance') - fallback if no ticker/company
+            ticker: Stock ticker (e.g., "KEYFIELD") - for filtering company-specific news
+            company_name: Company name (e.g., "Keyfield") - for filtering company-specific news
+            sector: Sector name (e.g., 'energy') - fallback if no ticker/company
             limit: Maximum number of articles to scrape
             use_cache: Whether to use cached articles for consistency testing
             
@@ -53,12 +53,13 @@ Answer:"""
             articles = self._article_cache[cache_key]
         else:
             if ticker or company_name:
-                # Scrape all news and filter for company-specific
+                # Use company-specific scraping from Yahoo Finance
                 print(f"📰 Scraping company-specific news for {ticker or company_name} (limit: {limit})...")
-                articles = self.scraper.scrape_macro_news(limit=limit * 2)  # Get more to filter
-                articles = self._filter_articles_by_company(articles, ticker, company_name)
+                # Extract ticker code (remove .KL if present)
+                ticker_code = (ticker or company_name).replace('.KL', '').upper()
+                articles = self.scraper.scrape_company_news(ticker_code, limit=limit)
             else:
-                # Fallback to sector news
+                # Fallback to sector news (macro energy)
                 print(f"📰 Scraping {sector} sector news (limit: {limit})...")
                 articles = self.scraper.scrape_sector_news(sector, limit=limit)
             

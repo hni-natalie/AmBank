@@ -6,6 +6,7 @@ import { Dashboard } from './components/Dashboard';
 import { DecisionTable } from './components/DecisionTable';
 import { SectorPeers } from './components/SectorPeers';
 import { DashboardPage } from './pages/DashboardPage';
+import { PeerComparisonPage } from './pages/PeerComparisonPage';
 
 interface Decision {
   decision: string;
@@ -71,6 +72,12 @@ function App() {
         {/* Dashboard route */}
         <Route path="/dashboard" element={<DashboardPage />} />
 
+<<<<<<< Updated upstream
+=======
+        {/* Peer Comparison route */}
+        <Route path="/peer-comparison" element={<PeerComparisonPage />} />
+
+>>>>>>> Stashed changes
         {/* Main app route */}
         <Route
           path="/"

@@ -1087,4 +1087,3 @@ async def analyze_financial_risk(request: ExtractFinancialsRequest):
             status_code=500,
             detail=f"Error performing risk analysis: {str(e)}"
         )
->>>>>>> origin/decision

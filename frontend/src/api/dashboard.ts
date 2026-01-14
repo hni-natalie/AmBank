@@ -71,6 +71,7 @@ export interface DashboardResponse {
     companyName: string;
     ticker?: string;
     sector?: string;
+    peers?: string[];
   };
   analysis: NormalizedDashboardAnalysis | null;
   error?: string;
@@ -191,6 +192,7 @@ export interface CompanySnapshot {
   average_volume: number | null;
   annual_report_pdfs?: string[];
   detail_url?: string;
+  peers?: string[];
 }
 
 export interface SearchCompanyResponse {
@@ -222,5 +224,79 @@ export async function searchCompany(ticker: string): Promise<CompanySnapshot | n
   } catch (error) {
     console.error('[API ERROR] searchCompany failed:', error);
     return null;
+  }
+}
+
+// --- Peer Comparison Types ---
+export interface SignalArrays {
+  positive: string[];
+  adverse: string[];
+  trend: string[];
+}
+
+export interface CompanySignals {
+  company_name: string;
+  ticker: string;
+  signals: SignalArrays;
+}
+
+export interface PeerComparisonResponse {
+  base: CompanySignals | null;
+  peers: CompanySignals[];
+}
+
+/**
+ * Fetch peer comparison from backend
+ * Slices peers to maximum 2 as per requirement
+ */
+export async function fetchPeerComparison(
+  ticker: string,
+  companyName: string | null | undefined,
+  peers: string[]
+): Promise<PeerComparisonResponse> {
+  const url = `${API_BASE_URL}/dashboard/compare-peers`;
+  const peersToSend = peers.slice(0, 2); // Slice to 2 peers per requirement
+
+  const payload = {
+    ticker,
+    company_name: companyName || ticker,
+    peers: peersToSend,
+  };
+
+  console.log('[API] POST', url, payload);
+
+  try {
+    const response = await fetch(url, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(payload),
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      let errorMessage = `API Error ${response.status}: ${response.statusText}`;
+      try {
+        const errorJson = JSON.parse(errorText);
+        if (errorJson.detail) {
+          errorMessage = `API Error: ${errorJson.detail}`;
+        }
+      } catch (e) {
+        if (errorText) errorMessage = `API Error: ${errorText}`;
+      }
+      throw new Error(errorMessage);
+    }
+
+    const data: PeerComparisonResponse = await response.json();
+    console.log('[API] Peer comparison response:', data);
+
+    return data;
+  } catch (error: any) {
+    console.error('[API ERROR] fetchPeerComparison failed:', error);
+    if (error.message === 'Failed to fetch') {
+      throw new Error('Network error: Could not reach backend server. Ensure it is running on port 8000.');
+    }
+    throw error;
   }
 }

@@ -55,14 +55,23 @@ export const DashboardPage: React.FC = () => {
       setSnapshotData(null);
 
       try {
+        console.log('[Dashboard] Starting fetch for ticker:', ticker);
+
         // Parallel Fetch: Analysis (Left) + Snapshot (Right)
         const [analysisRes, snapshotRes] = await Promise.all([
           analyzeUserInput(ticker),
           searchCompany(ticker)
         ]);
 
-        console.log('[Dashboard] Analysis:', analysisRes);
-        console.log('[Dashboard] Snapshot:', snapshotRes);
+        console.log('[Dashboard] Analysis response:', analysisRes);
+        console.log('[Dashboard] Snapshot response:', snapshotRes);
+
+        // Extract peers from multiple possible locations
+        const peersFromAnalysis = analysisRes?.companyInfo?.peers || [];
+        const peersFromSnapshot = snapshotRes?.peers || [];
+        const peers = peersFromAnalysis.length > 0 ? peersFromAnalysis : peersFromSnapshot;
+
+        console.log('[Dashboard] Peers extracted - Analysis:', peersFromAnalysis, 'Snapshot:', peersFromSnapshot, 'Final:', peers);
 
         setDashboardData(analysisRes);
         setSnapshotData(snapshotRes);
@@ -71,11 +80,12 @@ export const DashboardPage: React.FC = () => {
         setCachedDashboard(analysisRes, snapshotRes);
 
         if (analysisRes.error) {
+          console.log('[Dashboard] Error in analysis:', analysisRes.error);
           setError(analysisRes.error);
         }
       } catch (err: any) {
         const msg = err instanceof Error ? err.message : 'Unknown error';
-        console.log('[Dashboard] error:', msg);
+        console.error('[Dashboard] Caught error:', msg, err);
         setError(msg);
       } finally {
         setLoading(false);
@@ -89,6 +99,20 @@ export const DashboardPage: React.FC = () => {
   // Safe extract analysis using the normalized shape
   const analysis = dashboardData?.analysis;
   const companyInfo = dashboardData?.companyInfo;
+
+  const handleOpenAI = () => {
+    // Set context from current analysis if available
+    if (analysis) {
+      setAiContext({
+        ticker: ticker || 'UNKNOWN',
+        signal: 'General market analysis',
+        signalType: 'general',
+        analysis: dashboardData?.analysis,
+        company_name: companyNameDisplay
+      });
+    }
+    setAiOpen(true);
+  };
 
   // Empty State / Redirect Prompt
   if (!ticker && !loading && !dashboardData) {

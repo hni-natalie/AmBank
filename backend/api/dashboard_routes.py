@@ -298,7 +298,10 @@ async def analyze_from_user_input(request: UserInputAnalysisRequest, limit: int 
         identifier = get_company_identifier()
         company_info = identifier.identify_company(request.user_input)
         
+        print(f"[Backend] Identified company: {company_info}")
+        
         if not company_info.get('ticker'):
+            print(f"[Backend] Company not found for input: {request.user_input}")
             return {
                 'error': 'Company not found',
                 'company_info': company_info,
@@ -310,6 +313,7 @@ async def analyze_from_user_input(request: UserInputAnalysisRequest, limit: int 
         micro_agent = MicroNewsAgent()
         
         # Get macro signal (sector/market/policy news)
+        print(f"[Backend] Analyzing macro signals for {company_info['ticker']}...")
         macro_result = macro_agent.generate_signal(
             ticker=company_info['ticker'],
             sector=company_info.get('sector'),
@@ -317,6 +321,7 @@ async def analyze_from_user_input(request: UserInputAnalysisRequest, limit: int 
         )
         
         # Get micro signal (company-specific news)
+        print(f"[Backend] Analyzing micro signals for {company_info['ticker']}...")
         micro_result = micro_agent.generate_signal(
             ticker=company_info['ticker'],
             company_name=company_info.get('company_name'),
@@ -326,6 +331,13 @@ async def analyze_from_user_input(request: UserInputAnalysisRequest, limit: int 
         
         # Aggregate signals
         analysis = aggregate_signals(macro_result, micro_result)
+        
+        # Ensure peers is always a list (not null/None)
+        peers_list = company_info.get('peers') or []
+        print(f"[Backend] Peers for {company_info['ticker']}: {peers_list}")
+        
+        # Add peers to company_info for consistency
+        company_info['peers'] = peers_list
         
         return {
             'company_info': company_info,
@@ -346,16 +358,25 @@ class PeerComparisonRequest(BaseModel):
 @router.post("/dashboard/compare-peers")
 async def compare_with_peers(request: PeerComparisonRequest, limit: int = 20):
     """
-    Compare a company with its peers based on positive keywords.
+    Compare a company with its peers by analyzing signals.
     
     Args:
         request: Peer comparison request with ticker, company_name, and peers list
         limit: Maximum number of articles to analyze per agent
         
     Returns:
-        Comparison results with sentiments and percentages for main company and peers
+        Comparison results with signal arrays (positive, adverse, trend) for main company and 3 peers
     """
     try:
+        print(f"[Backend] compare-peers called with ticker={request.ticker}, peers={request.peers}")
+        
+        if not request.ticker:
+            print(f"[Backend] No ticker provided, returning empty response")
+            return {
+                'base': None,
+                'peers': []
+            }
+        
         macro_agent = get_macro_agent()
         micro_agent = MicroNewsAgent()
         
@@ -374,104 +395,70 @@ async def compare_with_peers(request: PeerComparisonRequest, limit: int = 20):
         )
         main_analysis = aggregate_signals(main_macro, main_micro)
         
-        # Analyze peers (limit to 2)
+        # Extract signal arrays from main company
+        main_signals = {
+            'positive': main_analysis.get('positive_signals', {}).get('signals', [])[:3],
+            'adverse': main_analysis.get('adverse_signals', {}).get('signals', [])[:3],
+            'trend': main_analysis.get('trend_signals', {}).get('signals', [])[:3]
+        }
+        
+        base_company = {
+            'company_name': request.company_name or request.ticker,  # Default to ticker if company_name is empty
+            'ticker': request.ticker,
+            'signals': main_signals
+        }
+        
+        # Analyze peers (limit to 3)
         peer_results = []
-        peers_to_analyze = request.peers[:2] if request.peers else []
+        peers_to_analyze = request.peers[:3] if request.peers else []
+        print(f"[Backend] Processing {len(peers_to_analyze)} peers: {peers_to_analyze}")
         
         for peer_ticker in peers_to_analyze:
             try:
                 print(f"🔍 Analyzing peer {peer_ticker}...")
+                # Ensure peer ticker has .KL suffix if not present
+                peer_ticker_formatted = f"{peer_ticker}.KL" if not peer_ticker.endswith('.KL') else peer_ticker
+                
                 peer_macro = macro_agent.generate_signal(
-                    ticker=f"{peer_ticker}.KL",
+                    ticker=peer_ticker_formatted,
                     sector="Energy",
                     limit=limit
                 )
                 peer_micro = micro_agent.generate_signal(
-                    ticker=f"{peer_ticker}.KL",
+                    ticker=peer_ticker_formatted,
                     sector="Energy",
                     limit=limit
                 )
                 peer_analysis = aggregate_signals(peer_macro, peer_micro)
-                peer_results.append({
+                
+                # Extract signal arrays from peer
+                peer_signals = {
+                    'positive': peer_analysis.get('positive_signals', {}).get('signals', [])[:3],
+                    'adverse': peer_analysis.get('adverse_signals', {}).get('signals', [])[:3],
+                    'trend': peer_analysis.get('trend_signals', {}).get('signals', [])[:3]
+                }
+                
+                peer_result = {
+                    'company_name': peer_analysis.get('company_name', peer_ticker),
                     'ticker': peer_ticker,
-                    'analysis': peer_analysis
-                })
+                    'signals': peer_signals
+                }
+                peer_results.append(peer_result)
+                print(f"[Backend] Successfully analyzed peer {peer_ticker}: {peer_result}")
             except Exception as e:
                 print(f"⚠️ Error analyzing peer {peer_ticker}: {str(e)}")
                 continue
         
-        # Calculate positive keyword counts and percentages
-        positive_keywords = [
-            'growth', 'supply', 'demand', 'increase', 'profit', 'gain', 
-            'positive', 'strong', 'improve', 'rise', 'up',
-            'capacity expansion', 'renewable adoption', 'solar', 'wind', 
-            'efficiency', 'investment', 'grid upgrade', 'project award', 
-            'production increase', 'output growth', 'sales growth'
-        ]
-        
-        def count_positive_keywords_in_all_signals(analysis: Dict) -> int:
-            """Count positive keywords across all signals (positive, adverse, trend)."""
-            all_signals = (
-                analysis.get('positive_signals', {}).get('signals', []) +
-                analysis.get('adverse_signals', {}).get('signals', []) +
-                analysis.get('trend_signals', {}).get('signals', [])
-            )
-            signals_text = ' '.join(all_signals).lower()
-            count = 0
-            for keyword in positive_keywords:
-                if keyword in signals_text:
-                    count += 1
-            return count
-        
-        # Count positive keywords for main company (across all signals)
-        main_positive_keyword_count = count_positive_keywords_in_all_signals(main_analysis)
-        main_positive_signal_count = len(main_analysis.get('positive_signals', {}).get('signals', []))
-        main_adverse_signal_count = len(main_analysis.get('adverse_signals', {}).get('signals', []))
-        main_trend_signal_count = len(main_analysis.get('trend_signals', {}).get('signals', []))
-        main_total_signals = main_positive_signal_count + main_adverse_signal_count + main_trend_signal_count
-        
-        # Calculate percentages based on signal counts (not keyword counts)
-        # More positive keywords detected = higher positive percentage
-        main_positive_pct = (main_positive_signal_count / main_total_signals * 100) if main_total_signals > 0 else 0
-        main_adverse_pct = (main_adverse_signal_count / main_total_signals * 100) if main_total_signals > 0 else 0
-        main_trend_pct = (main_trend_signal_count / main_total_signals * 100) if main_total_signals > 0 else 0
-        
-        # Calculate for peers
-        peer_comparisons = []
-        for peer_result in peer_results:
-            peer_analysis = peer_result['analysis']
-            peer_positive_keyword_count = count_positive_keywords_in_all_signals(peer_analysis)
-            peer_positive_signal_count = len(peer_analysis.get('positive_signals', {}).get('signals', []))
-            peer_adverse_signal_count = len(peer_analysis.get('adverse_signals', {}).get('signals', []))
-            peer_trend_signal_count = len(peer_analysis.get('trend_signals', {}).get('signals', []))
-            peer_total_signals = peer_positive_signal_count + peer_adverse_signal_count + peer_trend_signal_count
-            
-            peer_positive_pct = (peer_positive_signal_count / peer_total_signals * 100) if peer_total_signals > 0 else 0
-            peer_adverse_pct = (peer_adverse_signal_count / peer_total_signals * 100) if peer_total_signals > 0 else 0
-            peer_trend_pct = (peer_trend_signal_count / peer_total_signals * 100) if peer_total_signals > 0 else 0
-            
-            peer_comparisons.append({
-                'ticker': peer_result['ticker'],
-                'positive_percentage': round(peer_positive_pct, 1),
-                'adverse_percentage': round(peer_adverse_pct, 1),
-                'trend_percentage': round(peer_trend_pct, 1),
-                'overall_stance': peer_analysis.get('overall_stance', 'neutral')
-            })
-        
+        print(f"[Backend] Returning {len(peer_results)} peer results")
         return {
-            'main_company': {
-                'ticker': request.ticker,
-                'company_name': request.company_name,
-                'positive_percentage': round(main_positive_pct, 1),
-                'adverse_percentage': round(main_adverse_pct, 1),
-                'trend_percentage': round(main_trend_pct, 1),
-                'overall_stance': main_analysis.get('overall_stance', 'neutral')
-            },
-            'peers': peer_comparisons
+            'base': base_company,
+            'peers': peer_results if peer_results else []  # Ensure empty list instead of None
         }
         
     except Exception as e:
+        print(f"[Backend] Error in compare-peers: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Error comparing with peers: {str(e)}")
+
 
 
 class ExplainSignalRequest(BaseModel):

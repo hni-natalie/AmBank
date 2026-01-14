@@ -7,6 +7,7 @@ import { NewsPage } from './pages/NewsPage';
 import { CompaniesPage } from './pages/CompaniesPage';
 import { FinalListPage } from './pages/FinalListPage';
 import { DashboardPage } from './pages/DashboardPage';
+import { PeerComparisonPage } from './pages/PeerComparisonPage';
 
 /**
  * Main App component - handles routing.
@@ -25,6 +26,7 @@ function App() {
       <Route path="/companies" element={<CompaniesPage />} />
       <Route path="/final" element={<FinalListPage />} />
       <Route path="/dashboard" element={<DashboardPage />} />
+      <Route path="/dashboard/compare" element={<PeerComparisonPage />} />
     </Routes>
   )
 }

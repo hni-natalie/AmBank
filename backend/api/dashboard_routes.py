@@ -832,3 +832,165 @@ async def explain_insight(request: ExplainInsightRequest):
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error generating insight explanation: {str(e)}")
 
+
+class PrismDecisionRequest(BaseModel):
+    """Request model for prism decision."""
+    company_name: str
+
+
+class PrismDecisionResponse(BaseModel):
+    """Response model for prism decision."""
+    ticker: str
+    company_name: str
+    macro_score: int
+    micro_score: int
+    financial_score: int
+    final_score: int
+    decision: str  # "Strong Buy", "Neutral", "Avoid"
+    color: str
+    breakdown: Dict
+
+
+@router.post("/dashboard/prism-decision", response_model=PrismDecisionResponse)
+async def get_prism_decision(request: PrismDecisionRequest):
+    """
+    Calculate Prism Decision with weighted scoring.
+    
+    Formula: Final Score = (Macro × 40%) + (Micro × 30%) + (Financial × 30%)
+    
+    Args:
+        request: PrismDecisionRequest with company_name
+        
+    Returns:
+        PrismDecisionResponse with scores and decision
+    """
+    try:
+        company_name = request.company_name
+        
+        # Get company identifier
+        identifier = get_company_identifier()
+        company_info = identifier.identify_company(company_name)
+        
+        if not company_info or not company_info.get('ticker'):
+            raise HTTPException(status_code=404, detail=f"Company '{company_name}' not found")
+        
+        ticker = company_info['ticker']
+        
+        # Get macro agent
+        macro_agent = get_macro_agent()
+        
+        # Use energy sector for micro agent (all our companies are energy sector)
+        sector = "energy"
+        micro_agent = get_micro_agent(sector)
+        
+        # Generate macro signal
+        macro_result = macro_agent.generate_signal(limit=20)
+        
+        # Generate micro signal
+        micro_result = micro_agent.generate_signal(ticker=ticker, limit=20)
+        
+        # Extract signal counts
+        positive_count = 0
+        adverse_count = 0
+        
+        # Parse macro signals
+        macro_signals = macro_result.get('signals', [])
+        for signal in macro_signals:
+            signal_type = signal.get('type', '').lower()
+            if signal_type == 'positive':
+                positive_count += 1
+            elif signal_type == 'adverse':
+                adverse_count += 1
+        
+        # Parse micro signals
+        micro_signals = micro_result.get('signals', [])
+        for signal in micro_signals:
+            signal_type = signal.get('type', '').lower()
+            if signal_type == 'positive':
+                positive_count += 1
+            elif signal_type == 'adverse':
+                adverse_count += 1
+        
+        # Calculate Macro Score (0-100)
+        total_signals = positive_count + adverse_count
+        if total_signals == 0:
+            macro_score = 50
+        else:
+            ratio = positive_count / total_signals
+            macro_score = round(ratio * 100)
+        
+        # Calculate Micro Score (0-100)
+        micro_stance = micro_result.get('stance', 'neutral')
+        micro_confidence = micro_result.get('confidence', 0.5)
+        
+        if micro_stance == 'positive':
+            base_score = 75
+        elif micro_stance == 'negative':
+            base_score = 25
+        else:
+            base_score = 50
+        
+        micro_score = round(base_score * micro_confidence + (1 - micro_confidence) * 50)
+        
+        # Calculate Financial Score (0-100)
+        # Currently using signal ratio as placeholder
+        # TODO: Replace with actual financial metrics (P/E, revenue growth, debt-to-equity, ROE)
+        financial_score = macro_score  # Placeholder
+        
+        # Calculate Final Weighted Score
+        # Formula: 40% macro, 30% micro, 30% financial
+        final_score = round(
+            (macro_score * 0.4) + (micro_score * 0.3) + (financial_score * 0.3)
+        )
+        
+        # Determine Decision
+        if final_score >= 75:
+            decision = "Strong Buy"
+            color = "#10b981"  # Green
+        elif final_score >= 40:
+            decision = "Neutral"
+            color = "#f59e0b"  # Orange
+        else:
+            decision = "Avoid"
+            color = "#ef4444"  # Red
+        
+        # Prepare breakdown
+        breakdown = {
+            "macro": {
+                "score": macro_score,
+                "weight": 0.4,
+                "contribution": round(macro_score * 0.4, 1),
+                "positive_signals": positive_count,
+                "adverse_signals": adverse_count
+            },
+            "micro": {
+                "score": micro_score,
+                "weight": 0.3,
+                "contribution": round(micro_score * 0.3, 1),
+                "stance": micro_stance,
+                "confidence": micro_confidence
+            },
+            "financial": {
+                "score": financial_score,
+                "weight": 0.3,
+                "contribution": round(financial_score * 0.3, 1),
+                "note": "Currently using signal ratio. Will be enhanced with P/E, revenue growth, debt-to-equity, ROE."
+            }
+        }
+        
+        return PrismDecisionResponse(
+            ticker=ticker,
+            company_name=company_name,
+            macro_score=macro_score,
+            micro_score=micro_score,
+            financial_score=financial_score,
+            final_score=final_score,
+            decision=decision,
+            color=color,
+            breakdown=breakdown
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error calculating prism decision: {str(e)}")

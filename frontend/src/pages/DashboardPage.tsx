@@ -100,6 +100,71 @@ export const DashboardPage: React.FC = () => {
   const analysis = dashboardData?.analysis;
   const companyInfo = dashboardData?.companyInfo;
 
+  // Calculate Company Score (40% Macro + 30% Micro + 30% Financial)
+  const calculateCompanyScore = () => {
+    if (!analysis && !snapshotData) return null;
+
+    // Macro Score: Use macro_analysis confidence (0-100)
+    const macroScore = analysis?.macroAnalysis?.confidence || null;
+
+    // Micro Score: Use micro_analysis confidence (0-100)
+    const microScore = analysis?.microAnalysis?.confidence || null;
+
+    // Financial Score: Compute from ratios (normalize to 0-100)
+    let financialScore: number | null = null;
+    if (snapshotData) {
+      const { pe_ratio, roe, dividend_yield } = snapshotData;
+      let score = 50; // Start at neutral
+
+      // PE Ratio: Lower is better (normalize: 0-30 range, inverted)
+      if (pe_ratio !== null && pe_ratio > 0) {
+        const peScore = Math.max(0, Math.min(100, 100 - (pe_ratio / 30) * 100));
+        score += (peScore - 50) * 0.4;
+      }
+
+      // ROE: Higher is better (normalize: 0-30% range)
+      if (roe !== null) {
+        const roeScore = Math.max(0, Math.min(100, (roe / 30) * 100));
+        score += (roeScore - 50) * 0.4;
+      }
+
+      // Dividend Yield: Higher is better (normalize: 0-10% range)
+      if (dividend_yield !== null) {
+        const divScore = Math.max(0, Math.min(100, (dividend_yield / 10) * 100));
+        score += (divScore - 50) * 0.2;
+      }
+
+      financialScore = Math.max(0, Math.min(100, score));
+    }
+
+    // Calculate weighted score with dynamic weight adjustment
+    const components = [
+      { score: macroScore, weight: 0.4, name: 'Macro' },
+      { score: microScore, weight: 0.3, name: 'Micro' },
+      { score: financialScore, weight: 0.3, name: 'Financial' }
+    ];
+
+    const available = components.filter(c => c.score !== null);
+    if (available.length === 0) return null;
+
+    // Re-normalize weights
+    const totalWeight = available.reduce((sum, c) => sum + c.weight, 0);
+    const finalScore = available.reduce((sum, c) => {
+      const normalizedWeight = c.weight / totalWeight;
+      return sum + (c.score! * normalizedWeight);
+    }, 0);
+
+    return {
+      finalScore: Math.round(finalScore * 10) / 10,
+      macroScore,
+      microScore,
+      financialScore,
+      componentsAvailable: available.length
+    };
+  };
+
+  const companyScore = calculateCompanyScore();
+
   const handleOpenAI = () => {
     // Set context from current analysis if available
     if (analysis) {
@@ -325,6 +390,87 @@ export const DashboardPage: React.FC = () => {
             border: '1px solid #fecaca'
           }}>
             <strong>Error:</strong> {error}
+          </div>
+        )}
+
+        {/* Company Score Card */}
+        {companyScore && (
+          <div style={{
+            marginBottom: '32px',
+            background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
+            borderRadius: '16px',
+            padding: '32px',
+            color: 'white',
+            boxShadow: '0 10px 25px -5px rgba(0, 0, 0, 0.1)',
+            textAlign: 'center'
+          }}>
+            <h2 style={{
+              fontSize: '18px',
+              fontWeight: '600',
+              marginBottom: '16px',
+              opacity: 0.9
+            }}>
+              Company Score
+            </h2>
+
+            {/* Final Score */}
+            <div style={{
+              fontSize: '72px',
+              fontWeight: '800',
+              lineHeight: '1',
+              marginBottom: '8px'
+            }}>
+              {companyScore.finalScore}
+            </div>
+
+            {/* Caption */}
+            <div style={{
+              fontSize: '14px',
+              opacity: 0.9,
+              marginBottom: '24px'
+            }}>
+              40% Macro • 30% Micro • 30% Financial
+            </div>
+
+            {/* Component Scores */}
+            <div style={{
+              display: 'grid',
+              gridTemplateColumns: 'repeat(3, 1fr)',
+              gap: '16px',
+              maxWidth: '600px',
+              margin: '0 auto'
+            }}>
+              {companyScore.macroScore !== null && (
+                <div style={{
+                  background: 'rgba(255, 255, 255, 0.15)',
+                  borderRadius: '8px',
+                  padding: '12px'
+                }}>
+                  <div style={{ fontSize: '12px', opacity: 0.8, marginBottom: '4px' }}>Macro</div>
+                  <div style={{ fontSize: '24px', fontWeight: '700' }}>{companyScore.macroScore.toFixed(1)}</div>
+                </div>
+              )}
+              {companyScore.microScore !== null && (
+                <div style={{
+                  background: 'rgba(255, 255, 255, 0.15)',
+                  borderRadius: '8px',
+                  padding: '12px'
+                }}>
+                  <div style={{ fontSize: '12px', opacity: 0.8, marginBottom: '4px' }}>Micro</div>
+                  <div style={{ fontSize: '24px', fontWeight: '700' }}>{companyScore.microScore.toFixed(1)}</div>
+                </div>
+              )}
+              {companyScore.financialScore !== null && (
+                <div style={{
+                  background: 'rgba(255, 255, 255, 0.15)',
+                  borderRadius: '8px',
+                  padding: '12px'
+                }}>
+                  <div style={{ fontSize: '12px', opacity: 0.8, marginBottom: '4px' }}>Financial</div>
+                  <div style={{ fontSize: '24px', fontWeight: '700' }}>{companyScore.financialScore.toFixed(1)}</div>
+                </div>
+              )}
+            </div>
           </div>
         )}
 

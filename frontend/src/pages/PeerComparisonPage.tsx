@@ -334,13 +334,6 @@ export const PeerComparisonPage: React.FC = () => {
                                     }}>
                                         {data.main_company.company_name || data.main_company.ticker}
                                     </h3>
-                                    <p style={{
-                                        fontSize: '12px',
-                                        color: '#6b7280',
-                                        fontWeight: '500'
-                                    }}>
-                                        Main Company
-                                    </p>
                                 </div>
                                 <div style={{
                                     padding: '6px 12px',

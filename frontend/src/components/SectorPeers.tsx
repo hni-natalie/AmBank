@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { BarChart, Bar, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts';
+import { useAppStore } from '../store/appStore';
 
 interface FinancialData {
   financial_year: string;
@@ -37,11 +38,20 @@ interface SectorPeersResponse {
 }
 
 export const SectorPeers: React.FC = () => {
-  const [companyName, setCompanyName] = useState('dayang');
+  const storeInput = useAppStore((state) => state.userInput);
+  const companyName = storeInput?.ticker || storeInput?.companyName || '';
+  
   const [data, setData] = useState<SectorPeersResponse | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [selectedCompanies, setSelectedCompanies] = useState<Company[]>([]);
+
+  // Auto-fetch on mount or when companyName changes
+  useEffect(() => {
+    if (companyName) {
+      fetchSectorPeers();
+    }
+  }, [companyName]);
 
   const toggleWatchlist = async (companyCode: string, currentStatus: boolean) => {
     try {
@@ -144,41 +154,22 @@ export const SectorPeers: React.FC = () => {
     <div style={{ padding: '20px', fontFamily: 'system-ui, -apple-system, sans-serif', color: '#000' }}>
       <h1 style={{ marginBottom: '20px', color: '#000' }}>Sector Peers Analysis</h1>
       
-      {/* Search Section */}
-      <div style={{ marginBottom: '30px', display: 'flex', gap: '10px', alignItems: 'center' }}>
-        <input
-          type="text"
-          value={companyName}
-          onChange={(e) => setCompanyName(e.target.value)}
-          placeholder="Enter company name..."
-          style={{
-            padding: '10px',
-            fontSize: '16px',
-            border: '1px solid #ccc',
-            borderRadius: '4px',
-            width: '300px'
-          }}
-          onKeyPress={(e) => {
-            if (e.key === 'Enter') fetchSectorPeers();
-          }}
-        />
-        <button
-          onClick={fetchSectorPeers}
-          disabled={loading}
-          style={{
-            padding: '10px 20px',
-            fontSize: '16px',
-            backgroundColor: '#007bff',
-            color: 'white',
-            border: 'none',
-            borderRadius: '4px',
-            cursor: loading ? 'not-allowed' : 'pointer',
-            opacity: loading ? 0.6 : 1
-          }}
-        >
-          {loading ? 'Loading...' : 'Search'}
-        </button>
-      </div>
+      {companyName && (
+        <p style={{ marginBottom: '20px', color: '#666', fontSize: '14px' }}>
+          Analyzing sector peers for: <strong>{companyName}</strong>
+        </p>
+      )}
+
+      {/* Loading State */}
+      {loading && (
+        <div style={{
+          padding: '20px',
+          textAlign: 'center',
+          color: '#666'
+        }}>
+          Loading sector peer data...
+        </div>
+      )}
 
       {/* Error Message */}
       {error && (

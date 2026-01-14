@@ -1,12 +1,12 @@
 import { Routes, Route } from 'react-router-dom';
 import { LandingPage } from './pages/LandingPage';
 import { CompanyResultPage } from './pages/CompanyResultPage';
-import { ComparePeersPage } from './pages/ComparePeersPage';
 import { HomePage } from './pages/HomePage';
 import { NewsPage } from './pages/NewsPage';
 import { CompaniesPage } from './pages/CompaniesPage';
 import { FinalListPage } from './pages/FinalListPage';
 import { DashboardPage } from './pages/DashboardPage';
+import { AnalysisPage } from './pages/AnalysisPage';
 
 /**
  * Main App component - handles routing.
@@ -18,7 +18,7 @@ function App() {
       <Route path="/home" element={<HomePage />} />
       <Route path="/assess" element={<LandingPage />} />
       <Route path="/result/:jobId" element={<CompanyResultPage />} />
-      <Route path="/compare/:jobId" element={<ComparePeersPage />} />
+      <Route path="/analysis/*" element={<AnalysisPage />} />
       <Route path="/monitor" element={<div>Watchlist monitor page (to be implemented)</div>} />
       <Route path="/news" element={<NewsPage />} />
       <Route path="/companies" element={<CompaniesPage />} />

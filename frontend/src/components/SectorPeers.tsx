@@ -1,6 +1,8 @@
 import React, { useState, useEffect } from 'react';
+import { useNavigate, Link } from 'react-router-dom';
 import { BarChart, Bar, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts';
 import { useAppStore } from '../store/appStore';
+import { loadWatchlist, saveWatchlist, toggleWatchlist as toggleWatchlistUtil, WatchlistItem } from '../utils/watchlist';
 
 interface FinancialData {
   financial_year: string;
@@ -38,6 +40,7 @@ interface SectorPeersResponse {
 }
 
 export const SectorPeers: React.FC = () => {
+  const navigate = useNavigate();
   const storeInput = useAppStore((state) => state.userInput);
   const companyName = storeInput?.ticker || storeInput?.companyName || '';
   
@@ -45,6 +48,7 @@ export const SectorPeers: React.FC = () => {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [selectedCompanies, setSelectedCompanies] = useState<Company[]>([]);
+  const [toastMessage, setToastMessage] = useState<string>('');
 
   // Auto-fetch on mount or when companyName changes
   useEffect(() => {
@@ -53,16 +57,17 @@ export const SectorPeers: React.FC = () => {
     }
   }, [companyName]);
 
-  const toggleWatchlist = async (companyCode: string, currentStatus: boolean) => {
+  const toggleWatchlist = async (company: Company) => {
     try {
+      // Update backend watchlist status
       const response = await fetch(
-        `/api/company/${companyCode}/watchlist`,
+        `/api/company/${company.code}/watchlist`,
         {
           method: 'PUT',
           headers: {
             'Content-Type': 'application/json',
           },
-          body: JSON.stringify({ watchlist: !currentStatus })
+          body: JSON.stringify({ watchlist: !company.watchlist })
         }
       );
 
@@ -70,28 +75,72 @@ export const SectorPeers: React.FC = () => {
         throw new Error(`Failed to update watchlist`);
       }
 
-      // Update local state
-      setSelectedCompanies(prev => 
-        prev.map(company => 
-          company.code === companyCode 
-            ? { ...company, watchlist: !currentStatus }
-            : company
-        )
-      );
-
-      if (data) {
-        setData({
-          ...data,
-          companies: data.companies.map(company =>
-            company.code === companyCode
-              ? { ...company, watchlist: !currentStatus }
-              : company
+      // If adding to watchlist, update localStorage and show message
+      if (!company.watchlist) {
+        const currentWatchlist = loadWatchlist();
+        const watchlistItem: WatchlistItem = {
+          ticker: company.code,
+          name: company.name,
+          sector: company.sector
+        };
+        const { updated } = toggleWatchlistUtil(watchlistItem, currentWatchlist);
+        saveWatchlist(updated);
+        
+        // Show success message
+        setToastMessage(`${company.name} (${company.code}) added to watchlist`);
+        setTimeout(() => setToastMessage(''), 3000);
+        
+        // Update local state to show star as filled
+        setSelectedCompanies(prev => 
+          prev.map(c => 
+            c.code === company.code 
+              ? { ...c, watchlist: true }
+              : c
           )
-        });
+        );
+
+        if (data) {
+          setData({
+            ...data,
+            companies: data.companies.map(c =>
+              c.code === company.code
+                ? { ...c, watchlist: true }
+                : c
+            )
+          });
+        }
+      } else {
+        // If removing from watchlist, update localStorage and local state
+        const currentWatchlist = loadWatchlist();
+        const updated = currentWatchlist.filter(item => item.ticker !== company.code);
+        saveWatchlist(updated);
+        
+        setToastMessage(`${company.name} (${company.code}) removed from watchlist`);
+        setTimeout(() => setToastMessage(''), 3000);
+        
+        setSelectedCompanies(prev => 
+          prev.map(c => 
+            c.code === company.code 
+              ? { ...c, watchlist: false }
+              : c
+          )
+        );
+
+        if (data) {
+          setData({
+            ...data,
+            companies: data.companies.map(c =>
+              c.code === company.code
+                ? { ...c, watchlist: false }
+                : c
+            )
+          });
+        }
       }
     } catch (err) {
       console.error('Error updating watchlist:', err);
-      alert('Failed to update watchlist. Please try again.');
+      setToastMessage('Failed to update watchlist. Please try again.');
+      setTimeout(() => setToastMessage(''), 3000);
     }
   };
 
@@ -151,49 +200,77 @@ export const SectorPeers: React.FC = () => {
   };
 
   return (
-    <div style={{ padding: '20px', fontFamily: 'system-ui, -apple-system, sans-serif', color: '#000' }}>
-      <h1 style={{ marginBottom: '20px', color: '#000' }}>Sector Peers Analysis</h1>
-      
-      {companyName && (
-        <p style={{ marginBottom: '20px', color: '#666', fontSize: '14px' }}>
-          Analyzing sector peers for: <strong>{companyName}</strong>
-        </p>
-      )}
+    <div style={{
+      minHeight: '100vh',
+      backgroundColor: '#ffffff',
+      padding: '32px 24px',
+      color: '#1f2937'
+    }}>
+      <div style={{
+        maxWidth: '1400px',
+        margin: '0 auto'
+      }}>
 
-      {/* Loading State */}
-      {loading && (
-        <div style={{
-          padding: '20px',
-          textAlign: 'center',
-          color: '#666'
-        }}>
-          Loading sector peer data...
-        </div>
-      )}
+        {/* Loading State */}
+        {loading && (
+          <div style={{
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            flexDirection: 'column',
+            gap: '20px',
+            padding: '60px 20px'
+          }}>
+            <div style={{
+              width: '50px',
+              height: '50px',
+              border: '4px solid #e5e7eb',
+              borderTopColor: '#10a37f',
+              borderRadius: '50%',
+              animation: 'spin 1s linear infinite'
+            }} />
+            <p style={{ color: '#6b7280', fontSize: '16px' }}>
+              Loading sector peer data...
+            </p>
+            <style>{`
+              @keyframes spin {
+                0% { transform: rotate(0deg); }
+                100% { transform: rotate(360deg); }
+              }
+            `}</style>
+          </div>
+        )}
 
-      {/* Error Message */}
-      {error && (
-        <div style={{
-          padding: '15px',
-          backgroundColor: '#f8d7da',
-          color: '#721c24',
-          border: '1px solid #f5c6cb',
-          borderRadius: '4px',
-          marginBottom: '20px'
-        }}>
-          Error: {error}
-        </div>
-      )}
+        {/* Error Message */}
+        {error && (
+          <div style={{
+            padding: '16px',
+            backgroundColor: '#fee2e2',
+            borderRadius: '8px',
+            marginBottom: '24px',
+            color: '#991b1b',
+            border: '1px solid #fecaca'
+          }}>
+            <strong>Error:</strong> {error}
+          </div>
+        )}
 
-      {/* Results */}
-      {data && (
-        <div>
-          <h2 style={{ marginBottom: '15px', color: '#000' }}>
-            Sector: <span style={{ color: '#000', fontWeight: '600' }}>{data.sector}</span>
-          </h2>
-          <p style={{ color: '#000', marginBottom: '20px' }}>
-            Showing financial history charts for 3 companies (searched company + 2 peers)
-          </p>
+        {/* Results */}
+        {data && (
+          <div>
+            <div style={{ marginBottom: '24px' }}>
+              <h2 style={{ 
+                fontSize: '20px', 
+                fontWeight: '600', 
+                color: '#111827',
+                margin: '0 0 8px 0'
+              }}>
+                Sector: <span style={{ color: '#10a37f' }}>{data.sector}</span>
+              </h2>
+              <p style={{ color: '#6b7280', fontSize: '14px', margin: 0 }}>
+                Showing financial history charts for 3 companies (searched company + 2 peers)
+              </p>
+            </div>
 
 
           {/* Summary Section with 3 Bar Charts */}
@@ -243,21 +320,32 @@ export const SectorPeers: React.FC = () => {
 
             return (
               <div style={{
-                backgroundColor: 'white',
-                borderRadius: '8px',
-                padding: '20px',
-                marginBottom: '30px',
-                boxShadow: '0 2px 8px rgba(0,0,0,0.1)',
-                border: '1px solid #e0e0e0'
+                backgroundColor: '#f9fafb',
+                borderRadius: '12px',
+                padding: '24px',
+                marginBottom: '32px',
+                boxShadow: '0 1px 3px rgba(0,0,0,0.1)',
+                border: '1px solid #e5e7eb'
               }}>
-                <h3 style={{ marginBottom: '20px', color: '#000', fontSize: '18px', fontWeight: '600' }}>
+                <h3 style={{ 
+                  marginBottom: '24px', 
+                  color: '#111827', 
+                  fontSize: '18px', 
+                  fontWeight: '600' 
+                }}>
                   Key Metrics Comparison
                 </h3>
                 
                 <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '30px' }}>
                   {/* Revenue Growth Rate Bar Chart */}
                   <div>
-                    <h4 style={{ fontSize: '14px', fontWeight: '600', color: '#000', marginBottom: '10px', textAlign: 'center' }}>
+                    <h4 style={{ 
+                      fontSize: '14px', 
+                      fontWeight: '600', 
+                      color: '#111827', 
+                      marginBottom: '12px', 
+                      textAlign: 'center' 
+                    }}>
                       Revenue Growth Rate
                     </h4>
                     <ResponsiveContainer width="100%" height={280}>
@@ -273,7 +361,13 @@ export const SectorPeers: React.FC = () => {
 
                   {/* PE Ratio Bar Chart */}
                   <div>
-                    <h4 style={{ fontSize: '14px', fontWeight: '600', color: '#000', marginBottom: '10px', textAlign: 'center' }}>
+                    <h4 style={{ 
+                      fontSize: '14px', 
+                      fontWeight: '600', 
+                      color: '#111827', 
+                      marginBottom: '12px', 
+                      textAlign: 'center' 
+                    }}>
                       PE Ratio
                     </h4>
                     <ResponsiveContainer width="100%" height={280}>
@@ -289,7 +383,13 @@ export const SectorPeers: React.FC = () => {
 
                   {/* ROE Bar Chart */}
                   <div>
-                    <h4 style={{ fontSize: '14px', fontWeight: '600', color: '#000', marginBottom: '10px', textAlign: 'center' }}>
+                    <h4 style={{ 
+                      fontSize: '14px', 
+                      fontWeight: '600', 
+                      color: '#111827', 
+                      marginBottom: '12px', 
+                      textAlign: 'center' 
+                    }}>
                       Return on Equity (ROE)
                     </h4>
                     <ResponsiveContainer width="100%" height={280}>
@@ -309,11 +409,11 @@ export const SectorPeers: React.FC = () => {
 
           {/* Charts for Selected Companies */}
           {selectedCompanies.length > 0 ? (
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '20px' }}>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '24px' }}>
               {selectedCompanies.map((company, idx) => {
                 // Define colors for each company
                 const companyColors = ['#ef4444', '#3b82f6', '#10b981'];
-                const companyLightColors = ['#fee2e2', '#dbeafe', '#d1fae5'];
+                const companyLightColors = ['#fef2f2', '#eff6ff', '#f0fdf4'];
                 
                 // Transform data to show only year and reverse order (oldest to newest: 2021 -> 2025)
                 const chartData = company.financial_history?.map(item => ({
@@ -325,22 +425,44 @@ export const SectorPeers: React.FC = () => {
                   <div 
                     key={company.code} 
                     style={{ 
-                      padding: '15px',
+                      padding: '20px',
                       backgroundColor: companyLightColors[idx],
-                      borderRadius: '8px',
-                      boxShadow: '0 2px 8px rgba(0,0,0,0.1)',
+                      borderRadius: '12px',
+                      boxShadow: '0 1px 3px rgba(0,0,0,0.1)',
                       border: `2px solid ${companyColors[idx]}`
                     }}
                   >
-                    <h3 style={{ marginBottom: '15px', color: '#000', borderBottom: '2px solid #007bff', paddingBottom: '8px', fontSize: '14px', display: 'flex', alignItems: 'center', gap: '8px' }}>
-                      <span>
+                    <h3 style={{ 
+                      marginBottom: '20px', 
+                      color: '#111827', 
+                      borderBottom: `2px solid ${companyColors[idx]}`, 
+                      paddingBottom: '12px', 
+                      fontSize: '16px', 
+                      fontWeight: '600',
+                      display: 'flex', 
+                      alignItems: 'center', 
+                      gap: '8px' 
+                    }}>
+                      <span style={{ flex: 1 }}>
                         {company.name} ({company.code})
-                        {idx === 0 && <span style={{ fontSize: '11px', color: '#007bff', marginLeft: '8px', display: 'block' }}>Searched Company</span>}
+                        {idx === 0 && (
+                          <span style={{ 
+                            fontSize: '11px', 
+                            color: '#10a37f', 
+                            marginLeft: '8px', 
+                            display: 'inline-block',
+                            backgroundColor: '#d1fae5',
+                            padding: '2px 8px',
+                            borderRadius: '4px'
+                          }}>
+                            Searched
+                          </span>
+                        )}
                       </span>
                       <button
                         onClick={(e) => {
                           e.stopPropagation();
-                          toggleWatchlist(company.code, company.watchlist || false);
+                          toggleWatchlist(company);
                         }}
                         style={{
                           background: 'none',
@@ -361,8 +483,15 @@ export const SectorPeers: React.FC = () => {
                     </h3>
 
                   {/* Net Margin & EPS Line Chart */}
-                  <div style={{ marginBottom: '25px' }}>
-                    <h4 style={{ marginBottom: '10px', color: '#333', fontSize: '13px' }}>Net Margin % & EPS</h4>
+                  <div style={{ marginBottom: '28px' }}>
+                    <h4 style={{ 
+                      marginBottom: '12px', 
+                      color: '#374151', 
+                      fontSize: '14px',
+                      fontWeight: '600'
+                    }}>
+                      Net Margin % & EPS
+                    </h4>
                     <ResponsiveContainer width="100%" height={220}>
                       <LineChart data={chartData}>
                         <CartesianGrid strokeDasharray="3 3" vertical={false} />
@@ -407,7 +536,14 @@ export const SectorPeers: React.FC = () => {
 
                   {/* Dividend Payout Line Chart */}
                   <div>
-                    <h4 style={{ marginBottom: '10px', color: '#333', fontSize: '13px' }}>Dividend Payout %</h4>
+                    <h4 style={{ 
+                      marginBottom: '12px', 
+                      color: '#374151', 
+                      fontSize: '14px',
+                      fontWeight: '600'
+                    }}>
+                      Dividend Payout %
+                    </h4>
                     <ResponsiveContainer width="100%" height={220}>
                       <LineChart data={chartData}>
                         <CartesianGrid strokeDasharray="3 3" vertical={false} />
@@ -440,12 +576,42 @@ export const SectorPeers: React.FC = () => {
               })}
             </div>
           ) : (
-            <div style={{ padding: '20px', backgroundColor: '#fff3cd', border: '1px solid #ffc107', borderRadius: '4px' }}>
-              <p style={{ color: '#856404', margin: 0 }}>No companies with financial history data available in this sector.</p>
+            <div style={{ 
+              padding: '24px', 
+              backgroundColor: '#fffbeb', 
+              border: '1px solid #fcd34d', 
+              borderRadius: '8px',
+              color: '#92400e'
+            }}>
+              <p style={{ margin: 0, fontSize: '14px' }}>
+                No companies with financial history data available in this sector.
+              </p>
             </div>
           )}
         </div>
       )}
+
+      {/* Toast Message */}
+      {toastMessage && (
+        <div style={{
+          position: 'fixed',
+          bottom: '24px',
+          right: '24px',
+          backgroundColor: '#10a37f',
+          color: 'white',
+          padding: '14px 20px',
+          borderRadius: '8px',
+          boxShadow: '0 4px 12px rgba(0,0,0,0.15)',
+          zIndex: 1000,
+          fontSize: '14px',
+          fontWeight: '500',
+          maxWidth: '400px',
+          border: '1px solid #0d9468'
+        }}>
+          {toastMessage}
+        </div>
+      )}
+      </div>
     </div>
   );
 };

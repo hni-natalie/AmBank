@@ -230,7 +230,7 @@ export const DashboardPage: React.FC = () => {
               </span>
             </div>
           </div>
-          <div style={{ textAlign: 'right' }}>
+          <div style={{ textAlign: 'right', display: 'flex', gap: '12px', justifyContent: 'flex-end' }}>
             <Link
               to="/"
               style={{
@@ -246,6 +246,22 @@ export const DashboardPage: React.FC = () => {
               }}
             >
               ← Back to Search
+            </Link>
+            <Link
+              to="/analysis/sector-peers"
+              style={{
+                display: 'inline-block',
+                padding: '8px 16px',
+                backgroundColor: '#10a37f',
+                color: '#ffffff',
+                textDecoration: 'none',
+                borderRadius: '6px',
+                fontSize: '14px',
+                border: 'none',
+                fontWeight: '500'
+              }}
+            >
+              📊 Analysis Tools
             </Link>
           </div>
         </div>

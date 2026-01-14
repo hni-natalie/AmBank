@@ -9,12 +9,8 @@ from schemas.preferences import Preferences
 from schemas.decision import Decision
 from schemas.company import SectorCompanies
 from schemas.company_query import CompanyQueryRequest, CompanyQueryResponse
-<<<<<<< HEAD
-from agents import get_macro_signal, clear_session_store, get_klse_sector_companies, analyze_company_query, _search_company_on_klse, get_companies_by_sector_name, get_annual_report_pdfs
-from agents import download_and_search_pdf
-=======
 from agents_utils import get_macro_signal, clear_session_store, get_klse_sector_companies, analyze_company_query, _search_company_on_klse, get_companies_by_sector_name, get_annual_report_pdfs
->>>>>>> frontend
+from agents_utils import download_and_search_pdf
 from principles.principles_engine import evaluate_decision
 from utils.logger import get_all_logs, clear_logs
 import pdfplumber
@@ -637,8 +633,6 @@ async def get_company_annual_reports(company_code: str):
             status_code=500,
             detail=f"Error fetching annual reports: {str(e)}"
         )
-<<<<<<< HEAD
-
 
 @router.post("/annual-reports/extract-financials", response_model=ExtractFinancialsResponse)
 async def extract_financials_from_annual_reports(request: ExtractFinancialsRequest):
@@ -1138,5 +1132,3 @@ async def analyze_financial_risk(request: ExtractFinancialsRequest):
             status_code=500,
             detail=f"Error performing risk analysis: {str(e)}"
         )
-=======
->>>>>>> frontend

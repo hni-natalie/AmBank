@@ -1,10 +1,10 @@
 """Company identification API routes."""
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel
 from agents.company_identifier import CompanyIdentifier
 from typing import Optional
 
-router = APIRouter()
+company_router = APIRouter()
 
 # Global company identifier instance
 _company_identifier: Optional[CompanyIdentifier] = None
@@ -23,7 +23,7 @@ class UserInputRequest(BaseModel):
     user_input: str
 
 
-@router.post("/company/identify")
+@company_router.post("/company/identify")
 async def identify_company(request: UserInputRequest):
     """
     Identify Malaysian company from user input and return structured JSON.
@@ -57,3 +57,19 @@ async def identify_company(request: UserInputRequest):
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error identifying company: {str(e)}")
+
+# @company_router.get("/company/search")  # Use company_router here!
+async def search_company(company_name: str = Query(...)):
+    print(f"DEBUG: Received search for {company_name}")
+    try:
+        identifier = get_company_identifier()
+        # Note: Ensure identify_company handles a single string correctly
+        result = identifier.identify_company(company_name)
+        return {
+            "company_name": result.get("company_name"),
+            "ticker": result.get("ticker"),
+            "sector": result.get("sector"),
+            "peers": result.get("peers", []),
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error searching company: {str(e)}")

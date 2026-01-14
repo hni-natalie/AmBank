@@ -46,12 +46,6 @@ const cards: Card[] = [
   }
 ];
 
-const suggestedMessages = [
-  "Help me pick stock",
-  "Analyze my portfolio",
-  "What's my risk tolerance?",
-  "Create an investment plan"
-];
 
 /**
  * LandingPage component - ChatGPT-style interface with message column, cards, and chat input

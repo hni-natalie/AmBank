@@ -1,0 +1,213 @@
+.row {
+  border-bottom: 1px solid #e2e8f0;
+  transition: background-color 0.2s;
+}
+
+.row:hover {
+  background-color: #f8fafc;
+}
+
+.tickerCell {
+  padding: 12px 8px;
+  min-width: 140px;
+  white-space: nowrap;
+}
+
+.tickerCell:first-child {
+  padding-left: 16px;
+}
+
+.tickerName {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.ticker {
+  font-size: 15px;
+  font-weight: 700;
+  color: #1e293b;
+}
+
+.name {
+  font-size: 13px;
+  color: #64748b;
+}
+
+.cell {
+  padding: 12px 8px;
+  font-size: 13px;
+  color: #475569;
+  text-align: right;
+  white-space: nowrap;
+}
+
+.cell:last-child {
+  padding-right: 16px;
+}
+
+.flagsCell {
+  padding: 12px 8px;
+  min-width: 120px;
+  white-space: nowrap;
+}
+
+.flags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.flagChip {
+  display: inline-flex;
+  align-items: center;
+  padding: 3px 8px;
+  background-color: #fee2e2;
+  color: #991b1b;
+  border-radius: 8px;
+  font-size: 11px;
+  font-weight: 500;
+  border: 1px solid #fecaca;
+}
+
+.watchlistCell {
+  padding: 16px;
+  text-align: center;
+  width: 80px;
+  min-width: 80px;
+  position: relative;
+  z-index: 1;
+}
+
+.starButton {
+  width: 44px;
+  height: 44px;
+  border: 2px solid #cbd5e1;
+  border-radius: 50%;
+  background-color: #ffffff;
+  color: #f59e0b;
+  font-size: 24px;
+  font-weight: bold;
+  cursor: pointer;
+  transition: all 0.2s;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  line-height: 1;
+  margin: 0 auto;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+}
+
+.starButton:hover {
+  background-color: #fef3c7;
+  border-color: #f59e0b;
+  transform: scale(1.15);
+  box-shadow: 0 4px 8px rgba(245, 158, 11, 0.3);
+}
+
+.starButton:active {
+  transform: scale(0.95);
+}
+
+/* Filled star styling when watchlisted */
+.starButtonFilled {
+  background-color: #fef3c7;
+  border-color: #f59e0b;
+  color: #d97706;
+}
+
+.actionsCell {
+  padding: 12px 8px;
+  min-width: 120px;
+  white-space: nowrap;
+}
+
+.actionsCell:last-child {
+  padding-right: 16px;
+}
+
+.actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.detailsButton,
+.watchlistButton,
+.shortlistButton {
+  padding: 6px 12px;
+  border-radius: 6px;
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.2s;
+  border: 1px solid;
+  white-space: nowrap;
+}
+
+.detailsButton {
+  background-color: #3b82f6;
+  color: #ffffff;
+  border-color: #3b82f6;
+}
+
+.detailsButton:hover {
+  background-color: #2563eb;
+  border-color: #2563eb;
+}
+
+.watchlistButton {
+  background-color: #ffffff;
+  color: #64748b;
+  border-color: #cbd5e1;
+}
+
+.watchlistButton:hover {
+  background-color: #f8fafc;
+  color: #475569;
+  border-color: #94a3b8;
+}
+
+.watchlistButtonAdded {
+  background-color: #f1f5f9;
+  color: #94a3b8;
+  border-color: #cbd5e1;
+  opacity: 0.8;
+}
+
+.watchlistButtonAdded:hover {
+  background-color: #e2e8f0;
+  color: #64748b;
+  border-color: #94a3b8;
+}
+
+.shortlistButton {
+  background-color: #eff6ff;
+  color: #1e3a8a;
+  border-color: #bfdbfe;
+}
+
+.shortlistButton:hover:not(:disabled) {
+  background-color: #dbeafe;
+  border-color: #93c5fd;
+}
+
+.shortlistButton:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+  background-color: #f1f5f9;
+  color: #94a3b8;
+}
+
+@media (max-width: 768px) {
+  .actions {
+    flex-direction: column;
+  }
+
+  .detailsButton,
+  .watchlistButton,
+  .shortlistButton {
+    width: 100%;
+  }
+}

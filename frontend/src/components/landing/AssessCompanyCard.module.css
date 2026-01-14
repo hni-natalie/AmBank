@@ -1,0 +1,128 @@
+.container {
+  background-color: #ffffff;
+  border: 1px solid #e2e8f0;
+  border-radius: 12px;
+  padding: 32px;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+}
+
+.icon {
+  color: #3b82f6;
+  margin-bottom: 16px;
+  display: flex;
+  align-items: center;
+}
+
+.title {
+  font-size: 22px;
+  font-weight: 600;
+  color: #1e293b;
+  margin: 0 0 8px 0;
+}
+
+.description {
+  font-size: 14px;
+  color: #64748b;
+  margin: 0 0 24px 0;
+  line-height: 1.5;
+}
+
+.form {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  flex: 1;
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.label {
+  font-size: 13px;
+  font-weight: 500;
+  color: #475569;
+}
+
+.required {
+  color: #ef4444;
+}
+
+.input,
+.select {
+  padding: 10px 12px;
+  border: 1px solid #cbd5e1;
+  border-radius: 6px;
+  font-size: 14px;
+  color: #1e293b;
+  background-color: #ffffff;
+  transition: all 0.2s;
+  font-family: inherit;
+}
+
+.input:focus,
+.select:focus {
+  outline: none;
+  border-color: #3b82f6;
+  box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1);
+}
+
+.input::placeholder {
+  color: #94a3b8;
+}
+
+.select {
+  cursor: pointer;
+}
+
+.errorMessage {
+  padding: 10px 12px;
+  background-color: #fee2e2;
+  color: #991b1b;
+  border: 1px solid #fecaca;
+  border-radius: 6px;
+  font-size: 13px;
+}
+
+.primaryButton {
+  width: 100%;
+  padding: 12px 24px;
+  background-color: #3b82f6;
+  color: #ffffff;
+  border: none;
+  border-radius: 8px;
+  font-size: 15px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s;
+  margin-top: auto;
+}
+
+.primaryButton:hover:not(:disabled) {
+  background-color: #2563eb;
+}
+
+.primaryButton:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+  background-color: #94a3b8;
+}
+
+.helperText {
+  font-size: 12px;
+  color: #64748b;
+  margin: 0;
+  text-align: center;
+  line-height: 1.4;
+}
+
+@media (max-width: 768px) {
+  .container {
+    padding: 24px;
+  }
+}

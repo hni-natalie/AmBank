@@ -1,0 +1,27 @@
+.container {
+  display: grid;
+  grid-template-columns: 1fr 350px;
+  gap: 24px;
+  width: 100%;
+}
+
+.mainColumn {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.sideColumn {
+  display: flex;
+  flex-direction: column;
+}
+
+@media (max-width: 1024px) {
+  .container {
+    grid-template-columns: 1fr;
+  }
+
+  .sideColumn {
+    order: -1;
+  }
+}

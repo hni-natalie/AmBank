@@ -1,12 +1,10 @@
-import { useState } from 'react';
-import styles from './GuidedChat.module.css';
+import React, { useState } from 'react';
 
 interface GuidedChatProps {
   onPreferencesSubmit: (preferences: {
     time_horizon: string;
     risk_level: string;
     sectors: string[];
-    bank_statement?: File;
   }) => void;
 }
 
@@ -14,256 +12,179 @@ const timeHorizons = ['short', 'medium', 'long'];
 const riskLevels = ['conservative', 'balanced', 'aggressive'];
 const availableSectors = ['energy']; // Only energy sector supported
 
-const timeHorizonDescriptions: { [key: string]: string } = {
-  short: 'less than 1 year',
-  medium: '1-5 years',
-  long: '5+ years'
-};
-
-const riskLevelDescriptions: { [key: string]: string } = {
-  conservative: 'stable, lower returns',
-  balanced: 'moderate risk',
-  aggressive: 'higher risk, higher returns'
-};
-
 /**
- * GuidedChat component - collects user preferences with sliders, dropdown, and file upload.
- * White and dark blue theme with dark blue text.
+ * GuidedChat component - collects user preferences with pill selections.
+ * ChatGPT-style dark mode interface.
  */
 export const GuidedChat: React.FC<GuidedChatProps> = ({ onPreferencesSubmit }) => {
-  const [timeHorizonValue, setTimeHorizonValue] = useState<number>(1); // 0=short, 1=medium, 2=long
-  const [riskLevelValue, setRiskLevelValue] = useState<number>(1); // 0=conservative, 1=balanced, 2=aggressive
-  const [sector, setSector] = useState<string>('');
-  const [bankStatement, setBankStatement] = useState<File | null>(null);
+  const [timeHorizon, setTimeHorizon] = useState<string>('');
+  const [riskLevel, setRiskLevel] = useState<string>('');
+  const [sectors, setSectors] = useState<string[]>([]);
   const [submitted, setSubmitted] = useState(false);
-  const [isDragOver, setIsDragOver] = useState(false);
 
-  const timeHorizon = timeHorizons[timeHorizonValue];
-  const riskLevel = riskLevels[riskLevelValue];
-
-  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    if (e.target.files && e.target.files[0]) {
-      setBankStatement(e.target.files[0]);
-    }
-  };
-
-  const handleDragOver = (e: React.DragEvent<HTMLDivElement>) => {
-    e.preventDefault();
-    if (!submitted) {
-      setIsDragOver(true);
-    }
-  };
-
-  const handleDragLeave = (e: React.DragEvent<HTMLDivElement>) => {
-    e.preventDefault();
-    setIsDragOver(false);
-  };
-
-  const handleDrop = (e: React.DragEvent<HTMLDivElement>) => {
-    e.preventDefault();
-    setIsDragOver(false);
-    if (!submitted && e.dataTransfer.files && e.dataTransfer.files[0]) {
-      setBankStatement(e.dataTransfer.files[0]);
+  const toggleSector = (sector: string) => {
+    if (sectors.includes(sector)) {
+      setSectors(sectors.filter(s => s !== sector));
+    } else {
+      setSectors([...sectors, sector]);
     }
   };
 
   const handleSubmit = () => {
-    if (!timeHorizon || !riskLevel || !sector) {
+    if (!timeHorizon || !riskLevel || sectors.length === 0) {
       return;
     }
 
     const preferences = {
       time_horizon: timeHorizon,
       risk_level: riskLevel,
-      sectors: [sector],
-      bank_statement: bankStatement || undefined
+      sectors: sectors
     };
     
     onPreferencesSubmit(preferences);
     setSubmitted(true);
   };
 
-  const canSubmit = timeHorizon && riskLevel && sector && !submitted;
+  const canSubmit = timeHorizon && riskLevel && sectors.length > 0 && !submitted;
 
   return (
-    <div className={styles.container}>
-      <div className={styles.content}>
-        <h1 className={styles.title}>
-          Tell us about your preferences
+    <div style={{
+      maxWidth: '768px',
+      margin: '0 auto',
+      padding: '20px',
+      minHeight: '100vh',
+      display: 'flex',
+      flexDirection: 'column',
+      justifyContent: 'center',
+      alignItems: 'center'
+    }}>
+      <div style={{ width: '100%', maxWidth: '640px' }}>
+        <h1 style={{
+          fontSize: '32px',
+          fontWeight: '600',
+          marginBottom: '8px',
+          textAlign: 'center',
+          color: '#ececf1'
+        }}>
+          Investment Decision System
         </h1>
-        <p className={styles.subtitle}>
-          We'll use this information to provide personalized recommendations
+        <p style={{
+          fontSize: '16px',
+          color: '#8e8ea0',
+          textAlign: 'center',
+          marginBottom: '32px'
+        }}>
+          Select your investment preferences to get started
         </p>
 
-        {/* Time Horizon Slider */}
-        <div className={styles.section}>
-          <div className={styles.card}>
-            <label className={styles.label}>
-              Time Horizon
-            </label>
-            <div className={styles.sliderContainer}>
-            <div className={styles.sliderWrapper}>
-              <div
-                className={styles.sliderTrack}
-                style={{
-                  width: `${(timeHorizonValue / (timeHorizons.length - 1)) * 100}%`
-                }}
-              />
-              <input
-                type="range"
-                min="0"
-                max={timeHorizons.length - 1}
-                step="1"
-                value={timeHorizonValue}
-                onChange={(e) => !submitted && setTimeHorizonValue(Number(e.target.value))}
+        {/* Time Horizon Selection */}
+        <div style={{ marginBottom: '32px' }}>
+          <label style={{
+            display: 'block',
+            fontSize: '14px',
+            fontWeight: '500',
+            marginBottom: '12px',
+            color: '#ececf1'
+          }}>
+            Time Horizon
+          </label>
+          <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+            {timeHorizons.map((horizon) => (
+              <button
+                key={horizon}
+                onClick={() => setTimeHorizon(horizon)}
                 disabled={submitted}
-                className={styles.sliderInput}
-              />
-            </div>
-            <div className={styles.sliderLabels}>
-              {timeHorizons.map((horizon) => {
-                const isSelected = horizon === timeHorizon;
-                return (
-                  <div key={horizon} className={styles.sliderLabelContainer}>
-                    <span className={`${styles.sliderLabel} ${isSelected ? styles.sliderLabelSelected : ''}`}>
-                      {horizon}
-                    </span>
-                    <span className={`${styles.sliderDescription} ${isSelected ? styles.sliderDescriptionSelected : ''}`}>
-                      {timeHorizonDescriptions[horizon]}
-                    </span>
-                  </div>
-                );
-              })}
-            </div>
-          </div>
-          </div>
-        </div>
-
-        {/* Risk Level Slider */}
-        <div className={styles.section}>
-          <div className={styles.card}>
-            <label className={styles.label}>
-              Risk Level
-            </label>
-            <div className={styles.sliderContainer}>
-            <div className={styles.sliderWrapper}>
-              <div
-                className={styles.sliderTrack}
                 style={{
-                  width: `${(riskLevelValue / (riskLevels.length - 1)) * 100}%`
+                  padding: '10px 16px',
+                  borderRadius: '16px',
+                  border: '1px solid',
+                  borderColor: timeHorizon === horizon ? '#10a37f' : '#565869',
+                  backgroundColor: timeHorizon === horizon ? '#10a37f' : 'transparent',
+                  color: '#ececf1',
+                  fontSize: '14px',
+                  fontWeight: '500',
+                  cursor: submitted ? 'not-allowed' : 'pointer',
+                  transition: 'all 0.2s',
+                  textTransform: 'capitalize'
                 }}
-              />
-              <input
-                type="range"
-                min="0"
-                max={riskLevels.length - 1}
-                step="1"
-                value={riskLevelValue}
-                onChange={(e) => !submitted && setRiskLevelValue(Number(e.target.value))}
+              >
+                {horizon}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        {/* Risk Level Selection */}
+        <div style={{ marginBottom: '32px' }}>
+          <label style={{
+            display: 'block',
+            fontSize: '14px',
+            fontWeight: '500',
+            marginBottom: '12px',
+            color: '#ececf1'
+          }}>
+            Risk Level
+          </label>
+          <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+            {riskLevels.map((level) => (
+              <button
+                key={level}
+                onClick={() => setRiskLevel(level)}
                 disabled={submitted}
-                className={styles.sliderInput}
-              />
-            </div>
-            <div className={styles.sliderLabels}>
-              {riskLevels.map((level) => {
-                const isSelected = level === riskLevel;
-                return (
-                  <div key={level} className={styles.sliderLabelContainer}>
-                    <span className={`${styles.sliderLabel} ${isSelected ? styles.sliderLabelSelected : ''}`}>
-                      {level}
-                    </span>
-                    <span className={`${styles.sliderDescription} ${isSelected ? styles.sliderDescriptionSelected : ''}`}>
-                      {riskLevelDescriptions[level]}
-                    </span>
-                  </div>
-                );
-              })}
-            </div>
-          </div>
+                style={{
+                  padding: '10px 16px',
+                  borderRadius: '16px',
+                  border: '1px solid',
+                  borderColor: riskLevel === level ? '#10a37f' : '#565869',
+                  backgroundColor: riskLevel === level ? '#10a37f' : 'transparent',
+                  color: '#ececf1',
+                  fontSize: '14px',
+                  fontWeight: '500',
+                  cursor: submitted ? 'not-allowed' : 'pointer',
+                  transition: 'all 0.2s',
+                  textTransform: 'capitalize'
+                }}
+              >
+                {level}
+              </button>
+            ))}
           </div>
         </div>
 
-        {/* Sector Dropdown */}
-        <div className={styles.section}>
-          <div className={styles.card}>
-            <label className={styles.label}>
-              Sector
-            </label>
-            <p className={styles.description}>
-              Choose the sector you want to invest in—each has different growth potential and risk
-            </p>
-            <select
-            value={sector}
-            onChange={(e) => setSector(e.target.value)}
-            disabled={submitted}
-            className={styles.dropdown}
-          >
-            <option value="" disabled>
-              Select a sector
-            </option>
-            {availableSectors.map((s) => (
-              <option key={s} value={s}>
-                {s.charAt(0).toUpperCase() + s.slice(1)}
-              </option>
-              ))}
-            </select>
-          </div>
-        </div>
-
-        {/* Bank Statement Upload */}
-        <div className={styles.section}>
-          <div className={styles.card}>
-            <label className={styles.label}>
-              Bank Statement (Optional)
-            </label>
-            <p className={styles.description}>
-              Upload your bank statement so we can tailor recommendations to your finances.
-            </p>
-            <div
-            className={`${styles.fileUploadContainer} ${isDragOver ? styles.dragOver : ''}`}
-            onDragOver={handleDragOver}
-            onDragLeave={handleDragLeave}
-            onDrop={handleDrop}
-          >
-            <input
-              type="file"
-              id="bank-statement-upload"
-              accept=".pdf,.csv,.xlsx,.xls"
-              onChange={handleFileChange}
-              disabled={submitted}
-              className={styles.fileInput}
-            />
-            <label
-              htmlFor="bank-statement-upload"
-              className={styles.fileUploadLabel}
-            >
-              {bankStatement ? (
-                <div className={styles.fileUploadContent}>
-                  <div className={styles.fileUploadIcon}>✓</div>
-                  <div>
-                    <div className={styles.fileName}>
-                      {bankStatement.name}
-                    </div>
-                    <div className={styles.fileUploadSubtext}>
-                      Click to change file
-                    </div>
-                  </div>
-                </div>
-              ) : (
-                <div className={styles.fileUploadContent}>
-                  <div className={styles.fileUploadIcon}>📄</div>
-                  <div>
-                    <div className={styles.fileUploadText}>
-                      Click to upload or drag and drop
-                    </div>
-                    <div className={styles.fileUploadSubtext}>
-                      PDF, CSV, or Excel files
-                    </div>
-                  </div>
-                </div>
-              )}
-            </label>
-          </div>
+        {/* Sectors Selection */}
+        <div style={{ marginBottom: '32px' }}>
+          <label style={{
+            display: 'block',
+            fontSize: '14px',
+            fontWeight: '500',
+            marginBottom: '12px',
+            color: '#ececf1'
+          }}>
+            Sectors (select one or more)
+          </label>
+          <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+            {availableSectors.map((sector) => (
+              <button
+                key={sector}
+                onClick={() => toggleSector(sector)}
+                disabled={submitted}
+                style={{
+                  padding: '10px 16px',
+                  borderRadius: '16px',
+                  border: '1px solid',
+                  borderColor: sectors.includes(sector) ? '#10a37f' : '#565869',
+                  backgroundColor: sectors.includes(sector) ? '#10a37f' : 'transparent',
+                  color: '#ececf1',
+                  fontSize: '14px',
+                  fontWeight: '500',
+                  cursor: submitted ? 'not-allowed' : 'pointer',
+                  transition: 'all 0.2s',
+                  textTransform: 'capitalize'
+                }}
+              >
+                {sector}
+              </button>
+            ))}
           </div>
         </div>
 
@@ -271,7 +192,19 @@ export const GuidedChat: React.FC<GuidedChatProps> = ({ onPreferencesSubmit }) =
         <button
           onClick={handleSubmit}
           disabled={!canSubmit}
-          className={styles.submitButton}
+          style={{
+            width: '100%',
+            padding: '12px 24px',
+            borderRadius: '8px',
+            border: 'none',
+            backgroundColor: canSubmit ? '#10a37f' : '#565869',
+            color: '#fff',
+            fontSize: '16px',
+            fontWeight: '500',
+            cursor: canSubmit ? 'pointer' : 'not-allowed',
+            transition: 'all 0.2s',
+            marginTop: '8px'
+          }}
         >
           {submitted ? 'Processing...' : 'Get Investment Decision'}
         </button>
@@ -279,3 +212,4 @@ export const GuidedChat: React.FC<GuidedChatProps> = ({ onPreferencesSubmit }) =
     </div>
   );
 };
+

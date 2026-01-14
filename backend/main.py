@@ -4,7 +4,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from api.routes import router
 from api.rag_routes import router as rag_router
 from api.dashboard_routes import router as dashboard_router
-from api.company_routes import router as company_router
+from api.company_routes import company_router
 from api.peer_comparison_routes import router as peer_comparison_router
 
 app = FastAPI(
@@ -34,3 +34,6 @@ async def root():
     """Health check endpoint."""
     return {"status": "ok", "message": "Investment Decision System API"}
 
+@app.get("/api/test")
+def test():
+    return {"message": "API prefix is working"}

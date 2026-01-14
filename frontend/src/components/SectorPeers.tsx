@@ -1,6 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { useNavigate, Link } from 'react-router-dom';
-import { BarChart, Bar, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts';
+import { BarChart, Bar, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, PieChart, Pie, Cell } from 'recharts';
 import { useAppStore } from '../store/appStore';
 import { loadWatchlist, saveWatchlist, toggleWatchlist as toggleWatchlistUtil, WatchlistItem } from '../utils/watchlist';
 
@@ -39,8 +38,22 @@ interface SectorPeersResponse {
   companies: Company[];
 }
 
+interface CompanyRanking {
+  rank: number;
+  company_name: string;
+  company_code: string;
+  reasoning: string;
+  citations: string[];
+}
+
+interface RankingResponse {
+  status: string;
+  rankings: CompanyRanking[];
+  raw_analysis?: string;
+  message?: string;
+}
+
 export const SectorPeers: React.FC = () => {
-  const navigate = useNavigate();
   const storeInput = useAppStore((state) => state.userInput);
   const companyName = storeInput?.ticker || storeInput?.companyName || '';
   
@@ -49,12 +62,16 @@ export const SectorPeers: React.FC = () => {
   const [error, setError] = useState<string | null>(null);
   const [selectedCompanies, setSelectedCompanies] = useState<Company[]>([]);
   const [toastMessage, setToastMessage] = useState<string>('');
+  const [rankings, setRankings] = useState<CompanyRanking[]>([]);
+  const [rankingLoading, setRankingLoading] = useState(false);
+  const [hasLoadedRankings, setHasLoadedRankings] = useState(false);
 
   // Auto-fetch on mount or when companyName changes
   useEffect(() => {
     if (companyName) {
       fetchSectorPeers();
     }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [companyName]);
 
   const toggleWatchlist = async (company: Company) => {
@@ -182,10 +199,53 @@ export const SectorPeers: React.FC = () => {
       const selected = searchedCompany ? [searchedCompany, ...randomTwo] : randomTwo.slice(0, 3);
       setSelectedCompanies(selected);
       
+      // Fetch rankings after companies are selected
+      if (selected.length > 0) {
+        setHasLoadedRankings(false);
+        fetchRankings(selected);
+      }
+      
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to fetch data');
     } finally {
       setLoading(false);
+    }
+  };
+
+  const fetchRankings = async (companies: Company[]) => {
+    if (hasLoadedRankings) return; // Prevent multiple calls
+    
+    setRankingLoading(true);
+    try {
+      const response = await fetch('/api/company/rank', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ companies })
+      });
+
+      if (!response.ok) {
+        throw new Error(`Failed to fetch rankings: ${response.status}`);
+      }
+
+      const result: RankingResponse = await response.json();
+      console.log('Ranking response:', result);
+      
+      if (result.rankings && result.rankings.length > 0) {
+        setRankings(result.rankings);
+        setHasLoadedRankings(true);
+      } else {
+        console.warn('No rankings in response:', result);
+        // Show raw analysis if available
+        if (result.raw_analysis) {
+          console.log('Raw AI analysis:', result.raw_analysis);
+        }
+      }
+    } catch (err) {
+      console.error('Error fetching rankings:', err);
+    } finally {
+      setRankingLoading(false);
     }
   };
 
@@ -415,6 +475,12 @@ export const SectorPeers: React.FC = () => {
                 const companyColors = ['#ef4444', '#3b82f6', '#10b981'];
                 const companyLightColors = ['#fef2f2', '#eff6ff', '#f0fdf4'];
                 
+                // Find ranking for this company
+                const ranking = rankings.find(r => 
+                  r.company_code === company.code || 
+                  r.company_name === company.name
+                );
+                
                 // Transform data to show only year and reverse order (oldest to newest: 2021 -> 2025)
                 const chartData = company.financial_history?.map(item => ({
                   ...item,
@@ -481,6 +547,84 @@ export const SectorPeers: React.FC = () => {
                         {company.watchlist ? '★' : '☆'}
                       </button>
                     </h3>
+
+                    {/* Debug: Show ranking status */}
+                    {!rankingLoading && rankings.length === 0 && selectedCompanies.length > 0 && (
+                      <div style={{
+                        backgroundColor: '#fef3c7',
+                        borderRadius: '8px',
+                        padding: '10px',
+                        marginBottom: '15px',
+                        fontSize: '12px',
+                        color: '#92400e'
+                      }}>
+                        ⚠️ Waiting for AI rankings... (Total rankings loaded: {rankings.length})
+                      </div>
+                    )}
+
+                    {/* Ranking Display */}
+                    {ranking && (
+                      <div style={{
+                        backgroundColor: 'white',
+                        borderRadius: '8px',
+                        padding: '15px',
+                        marginBottom: '20px',
+                        border: `2px solid ${companyColors[idx]}`,
+                        boxShadow: '0 1px 3px rgba(0,0,0,0.1)'
+                      }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '10px' }}>
+                          <div style={{
+                            backgroundColor: companyColors[idx],
+                            color: 'white',
+                            width: '36px',
+                            height: '36px',
+                            borderRadius: '50%',
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            fontSize: '18px',
+                            fontWeight: '700'
+                          }}>
+                            #{ranking.rank}
+                          </div>
+                          <div style={{ flex: 1 }}>
+                            <div style={{ fontSize: '12px', color: '#6b7280', fontWeight: '600' }}>
+                              Investment Ranking
+                            </div>
+                            <div style={{ fontSize: '11px', color: '#9ca3af' }}>
+                              {ranking.rank === 1 ? 'Most Investable' : ranking.rank === 2 ? 'Second Choice' : 'Third Choice'}
+                            </div>
+                          </div>
+                        </div>
+                        <div style={{ 
+                          fontSize: '13px', 
+                          color: '#374151', 
+                          lineHeight: '1.6',
+                          marginBottom: '10px'
+                        }}>
+                          {ranking.reasoning}
+                        </div>
+                        {ranking.citations && ranking.citations.length > 0 && (
+                          <div style={{ 
+                            fontSize: '11px', 
+                            color: '#6b7280',
+                            borderTop: '1px solid #e5e7eb',
+                            paddingTop: '8px'
+                          }}>
+                            <strong>Key Metrics:</strong>
+                            <ul style={{ 
+                              margin: '5px 0 0 0', 
+                              paddingLeft: '20px',
+                              listStyleType: 'disc'
+                            }}>
+                              {ranking.citations.map((citation, i) => (
+                                <li key={i} style={{ marginBottom: '3px' }}>{citation}</li>
+                              ))}
+                            </ul>
+                          </div>
+                        )}
+                      </div>
+                    )}
 
                   {/* Net Margin & EPS Line Chart */}
                   <div style={{ marginBottom: '28px' }}>

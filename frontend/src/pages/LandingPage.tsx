@@ -15,7 +15,7 @@ export function LandingPage() {
     <div className={styles.container}>
       <header className={styles.header}>
         <div className={styles.headerLeft}>
-          <span className={styles.productName}>Relationship Intelligence Copilot</span>
+          <span className={styles.productName}>AmPrism</span>
         </div>
         <div className={styles.headerRight}>
           <div className={styles.roleToggle}>
@@ -47,7 +47,7 @@ export function LandingPage() {
       <main className={styles.main}>
         <div className={styles.content}>
           <div className={styles.headerSection}>
-            <h1 className={styles.title}>Relationship Decision & Monitoring</h1>
+            <h1 className={styles.title}>AmPrism</h1>
             <p className={styles.subtitle}>
               Assess a company quickly, then monitor watchlisted companies for major events.
             </p>

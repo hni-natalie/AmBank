@@ -340,6 +340,186 @@ async def test_ollama():
         }
 
 
+class CompanyRankingRequest(BaseModel):
+    """Request model for ranking companies."""
+    companies: List[Dict]  # List of company data with financial metrics
+
+
+class CompanyRankingResponse(BaseModel):
+    """Response model for company rankings."""
+    rankings: List[Dict]  # List of ranked companies with rank, company data, reasoning, citations
+
+
+@router.post("/company/rank")
+async def rank_companies(request: CompanyRankingRequest):
+    """
+    Rank companies by investment potential using Ollama LLM analysis.
+    
+    This endpoint takes 3 companies with their financial data and uses Ollama
+    to analyze and rank them from most to least investable, providing detailed
+    reasoning with citations to specific metrics.
+    
+    Request Body:
+        {
+            "companies": [
+                {
+                    "name": "Company A",
+                    "code": "1234",
+                    "pe_ratio": 15.5,
+                    "roe": 12.3,
+                    "revenue_growth": 8.5,
+                    ...
+                }
+            ]
+        }
+    
+    Returns:
+        CompanyRankingResponse with rankings, reasoning, and citations
+    """
+    try:
+        # Import ollama
+        try:
+            import ollama
+        except ImportError:
+            raise HTTPException(
+                status_code=500,
+                detail="Ollama Python package not installed. Install with: pip install ollama"
+            )
+        
+        companies = request.companies
+        if not companies or len(companies) == 0:
+            raise HTTPException(status_code=400, detail="At least one company is required")
+        
+        # Build comprehensive prompt for Ollama with all company data
+        prompt = f"""You are a financial analyst tasked with ranking {len(companies)} companies based on their investment potential.
+
+Analyze the following companies and their financial metrics:
+
+"""
+        
+        for idx, company in enumerate(companies, 1):
+            prompt += f"""
+Company {idx}: {company.get('name', 'N/A')} ({company.get('code', 'N/A')})
+- Sector: {company.get('sector', 'N/A')}
+- PE Ratio: {company.get('pe_ratio', 'N/A')}
+- ROE (Return on Equity): {company.get('roe', 'N/A')}%
+- Revenue: {company.get('revenue', 'N/A')} million
+- Market Cap: {company.get('market_cap', 'N/A')}
+- Dividend Yield: {company.get('dividend_yield', 'N/A')}%
+- Latest Financial Year: {company.get('financial_year', 'N/A')}
+"""
+            
+            # Add financial history if available
+            if company.get('financial_history'):
+                history = company['financial_history']
+                if len(history) >= 2:
+                    latest = history[-1]
+                    prior = history[-2]
+                    
+                    # Calculate revenue growth
+                    if latest.get('revenue') and prior.get('revenue'):
+                        revenue_growth = ((latest['revenue'] - prior['revenue']) / prior['revenue']) * 100
+                        prompt += f"- Revenue Growth Rate: {revenue_growth:.1f}%\n"
+                    
+                    # Add latest year metrics
+                    prompt += f"- Latest Revenue: {latest.get('revenue', 'N/A')} ('000)\n"
+                    prompt += f"- Latest Net Profit: {latest.get('net', 'N/A')} ('000)\n"
+                    prompt += f"- Latest EPS: {latest.get('eps', 'N/A')}\n"
+                    prompt += f"- Latest Net Margin: {latest.get('net_percent', 'N/A')}%\n"
+                    prompt += f"- Latest Dividend Payout: {latest.get('dp_percent', 'N/A')}%\n"
+        
+        prompt += """
+
+Task: Rank these companies from 1 (most investable) to """ + str(len(companies)) + """ (least investable).
+
+For each company, provide:
+1. Rank (1, 2, or 3)
+2. Company name
+3. Detailed reasoning (2-3 sentences explaining why this rank)
+4. Specific citations (reference specific metrics like "PE ratio of 15.5" or "ROE of 12.3%")
+
+Consider these factors in your analysis:
+- Valuation (PE ratio - lower is generally better but compare to industry)
+- Profitability (ROE - higher is better, >15% is excellent)
+- Growth (Revenue growth rate - higher indicates expansion)
+- Dividend sustainability (Dividend payout ratio and yield)
+- Net margin (higher indicates efficiency)
+- Overall financial health and momentum
+
+Format your response as JSON with this exact structure:
+{
+    "rankings": [
+        {
+            "rank": 1,
+            "company_name": "Company Name",
+            "company_code": "CODE",
+            "reasoning": "Detailed explanation here...",
+            "citations": ["PE ratio of 15.5", "ROE of 12.3%", "Revenue growth of 8.5%"]
+        }
+    ]
+}
+
+Be objective and data-driven. Focus on financial fundamentals."""
+
+        try:
+            # Call Ollama for analysis
+            response = ollama.chat(
+                model="llama3.2",
+                messages=[
+                    {"role": "system", "content": "You are an expert financial analyst specializing in Malaysian equities. Provide objective, data-driven investment analysis."},
+                    {"role": "user", "content": prompt}
+                ]
+            )
+            
+            analysis_text = response['message']['content']
+            
+            # Try to parse JSON from the response
+            import json
+            import re
+            
+            # Extract JSON from response (handle markdown code blocks)
+            json_match = re.search(r'```json\s*(.*?)\s*```', analysis_text, re.DOTALL)
+            if json_match:
+                json_str = json_match.group(1)
+            else:
+                # Try to find JSON object directly
+                json_match = re.search(r'\{.*\}', analysis_text, re.DOTALL)
+                if json_match:
+                    json_str = json_match.group(0)
+                else:
+                    json_str = analysis_text
+            
+            try:
+                rankings_data = json.loads(json_str)
+                return {
+                    "status": "success",
+                    "rankings": rankings_data.get("rankings", []),
+                    "raw_analysis": analysis_text
+                }
+            except json.JSONDecodeError:
+                # If JSON parsing fails, return raw analysis
+                return {
+                    "status": "partial_success",
+                    "rankings": [],
+                    "raw_analysis": analysis_text,
+                    "message": "LLM provided analysis but not in expected JSON format"
+                }
+                
+        except Exception as ollama_error:
+            raise HTTPException(
+                status_code=500,
+                detail=f"Ollama analysis failed: {str(ollama_error)}"
+            )
+            
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error ranking companies: {str(e)}"
+        )
+
+
 @router.post("/company/query", response_model=CompanyQueryResponse)
 async def query_company(request: CompanyQueryRequest):
     """

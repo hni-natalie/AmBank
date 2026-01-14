@@ -47,8 +47,6 @@ The system transforms complex financial analysis from a multi-hour manual proces
 
 ## Tech Stack Used
 
-## Tech Stack Used
-
 ### Frontend
 - **Framework**: React 18 with TypeScript
 - **Build Tool**: Vite 5.x (for fast development and optimized production builds)
@@ -125,37 +123,6 @@ The system transforms complex financial analysis from a multi-hour manual proces
 - **Browser Compatibility**: Modern browsers with ES6+ support
 - **Operating System**: Cross-platform (macOS, Windows, Linux)
 
-## Data Contracts
-
-### Preferences Input
-```json
-{
-  "time_horizon": "long",
-  "risk_level": "balanced",
-  "sectors": ["technology", "finance"]
-}
-```
-
-### Macro Signal Output
-```json
-{
-  "macro_stance": "risk_on",
-  "confidence": 0.72,
-  "summary": "Inflation easing with stable growth."
-}
-```
-
-### Decision Output
-```json
-{
-  "decision": "hold",
-  "confidence": 0.68,
-  "reasoning": [
-    "Macro environment supports moderate risk",
-    "Principles favor capital preservation"
-  ]
-}
-```
 
 ## Setup
 
@@ -218,61 +185,8 @@ npm run dev
 
 The frontend will be available at `http://localhost:5173`
 
-### Using the Application
+### Link To Our Demo Video 
 
-1. Open `http://localhost:5173` in your browser
-2. Click "Submit Preferences" in the GuidedChat component
-3. The system will send hardcoded preferences to the backend
-4. The backend processes the preferences through the orchestrator
-5. The decision is displayed in both Dashboard and DecisionTable components
 
-## MVP Flow
-
-1. Frontend sends hardcoded preferences
-2. Backend receives preferences via `/api/decision` endpoint
-3. API routes call macro agent
-4. Macro agent returns mocked signal data
-5. Principles engine converts signal to decision
-6. Backend returns decision JSON
-7. Frontend renders decision in Dashboard and DecisionTable
-8. Session ends → all vectors and temporary data cleared
-
-## Project Structure
-
-```
-ambank/
-├── backend/
-│   ├── main.py
-│   ├── api/
-│   │   └── routes.py
-│   ├── agents.py
-│   ├── principles/
-│   │   └── principles_engine.py
-│   ├── schemas/
-│   │   ├── preferences.py
-│   │   ├── signals.py
-│   │   └── decision.py
-│   └── requirements.txt
-├── frontend/
-│   ├── src/
-│   │   ├── components/
-│   │   │   ├── GuidedChat.tsx
-│   │   │   ├── Dashboard.tsx
-│   │   │   └── DecisionTable.tsx
-│   │   ├── App.tsx
-│   │   ├── main.tsx
-│   │   └── index.css
-│   ├── index.html
-│   ├── package.json
-│   └── vite.config.ts
-└── README.md
-```
-
-## Notes
-
-- This is a **scaffolding-only** implementation. All logic is stubbed with hardcoded values.
-- No database, authentication, or persistence is implemented.
-- The vector store is in-memory only and cleared on session end.
-- All components follow a single responsibility principle.
-- The system is designed to be stateless and minimal.
-
+### Link To Our Presentation Deck 
+https://www.canva.com/design/DAG-VMwtZA8/JFf1AKVcZsHr3WtX62GROQ/edit?utm_content=DAG-VMwtZA8&utm_campaign=designshare&utm_medium=link2&utm_source=sharebutton 

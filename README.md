@@ -1,4 +1,4 @@
-# AmBank Investment Analysis System
+# AmPrism Investment Analysis System
 
 ## Problem Statement
 

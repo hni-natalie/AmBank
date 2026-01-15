@@ -186,7 +186,7 @@ npm run dev
 The frontend will be available at `http://localhost:5173`
 
 ### Link To Our Demo Video 
-
+https://youtu.be/u8ku6B8lrBQ
 
 ### Link To Our Presentation Deck 
 https://www.canva.com/design/DAG-VMwtZA8/JFf1AKVcZsHr3WtX62GROQ/edit?utm_content=DAG-VMwtZA8&utm_campaign=designshare&utm_medium=link2&utm_source=sharebutton 
